@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Another
+GenericName=Agent client
+Comment=Agent client that lives in the tray (two Flutter engines, one process)
+Exec=@BINARY@
+Icon=dev.demo.agent_tray_demo
+Terminal=false
+Categories=Development;
+StartupWMClass=dev.demo.agent_tray_demo
+StartupNotify=false
