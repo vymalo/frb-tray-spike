@@ -43,9 +43,13 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
     super.initState();
     _configureWindow();
     PanelWindow.onFocusLost(_dismiss);
+    // The shared state decides whether the popover is open, whichever engine
+    // or shortcut changed it.
     _visibility = _state.listen((s) {
       if (s.popoverVisible && !_visible) {
         PanelWindow.focus(anchorX: s.popoverAnchorX).ignore();
+      } else if (!s.popoverVisible && _visible) {
+        PanelWindow.hide().ignore();
       }
       _visible = s.popoverVisible;
     });
@@ -106,6 +110,8 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
           onDismiss: _dismiss,
           onOpenMainWindow: pluginError == null ? _openMainWindow : null,
           onMenu: _onMenu,
+          // The macOS panel is transparent, so only the card shows.
+          transparentBackdrop: Platform.isMacOS,
         ),
       ),
     );
@@ -122,6 +128,7 @@ class TrayPanelView extends StatefulWidget {
     this.onOpenMainWindow,
     this.onMenu,
     this.pluginError,
+    this.transparentBackdrop = false,
   });
 
   final AgentSnapshot? snapshot;
@@ -130,6 +137,10 @@ class TrayPanelView extends StatefulWidget {
   final VoidCallback? onOpenMainWindow;
   final ValueChanged<PopoverMenu>? onMenu;
   final String? pluginError;
+
+  /// Leaves the area around the card see-through, for windows that are
+  /// transparent (the macOS panel); otherwise it is filled with the backdrop.
+  final bool transparentBackdrop;
 
   @override
   State<TrayPanelView> createState() => _TrayPanelViewState();
@@ -160,8 +171,11 @@ class _TrayPanelViewState extends State<TrayPanelView> {
           const SingleActivator(LogicalKeyboardKey.escape): widget.onDismiss!,
       },
       child: Scaffold(
+        backgroundColor: widget.transparentBackdrop ? Colors.transparent : null,
         body: DecoratedBox(
-          decoration: const BoxDecoration(gradient: Palette.backdrop),
+          decoration: widget.transparentBackdrop
+              ? const BoxDecoration()
+              : const BoxDecoration(gradient: Palette.backdrop),
           child: Padding(
             padding: const EdgeInsets.all(14),
             child: Container(

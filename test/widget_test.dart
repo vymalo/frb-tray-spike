@@ -96,6 +96,18 @@ void main() {
       expect(chosen, [PopoverMenu.remote]);
     });
 
+    testWidgets('can leave the area around the card transparent', (tester) async {
+      await pumpPanel(tester, TrayPanelView(snapshot: snapshot(), onSubmit: (_) {}));
+      expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor, isNull);
+
+      await pumpPanel(
+        tester,
+        TrayPanelView(snapshot: snapshot(), onSubmit: (_) {}, transparentBackdrop: true),
+      );
+      expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor, Colors.transparent);
+      expect(find.text('Driven from iPhone'), findsOneWidget);
+    });
+
     testWidgets('shows missing plugin registration', (tester) async {
       await pumpPanel(
         tester,

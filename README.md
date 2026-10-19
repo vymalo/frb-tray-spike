@@ -56,7 +56,7 @@ a Mac you can also just clone the repo and run `flutter run -d macos`.
 
 - Launch it: only the tray icon appears.
 - Click the tray icon (menu bar on macOS, top bar on Linux) to toggle the
-  popover under it.
+  popover under it. On macOS, <kbd>⌥ Space</kbd> toggles it from any app.
 - Type an instruction in "Ask anything" and send it. The run starts in Rust,
   the popover shows its progress, and the chat window gets the prompt and the
   agent's live reply. Click outside or press <kbd>Esc</kbd> to dismiss the
@@ -88,9 +88,11 @@ It installs to `~/.local/share/agent_tray_demo`, adds `agent-tray-demo` to
 | | Linux (GNOME) | macOS |
 |---|---|---|
 | Tray | X11 tray icon (`GtkStatusIcon`, `linux/runner/linux_tray.cc`): any click toggles the popover, whose `⋯` menu replaces a native menu | NSStatusItem (`tray_manager`): left click toggles the popover, right click opens the menu |
+| Popover window | Borderless GTK window, always on top, skips the taskbar; square, filled with the backdrop | Non-activating `NSPanel` (like Spotlight): takes keyboard focus without bringing the app forward, stays out of ⌘-Tab, transparent so only the rounded card and its shadow show. `desktop_multi_window` can't create panels, so the runner moves engine B's view into one |
+| Global shortcut | None (GNOME on Wayland doesn't let apps grab keys globally) | <kbd>⌥ Space</kbd> through Carbon `RegisterEventHotKey`, no Accessibility permission needed |
 | Popover position | Under the icon through X11; `main.cc` forces XWayland (even over `GDK_BACKEND=wayland`) because Wayland ignores window moves | Centered under the status item |
 | Dock / taskbar | Main window hidden at launch; popover skips the taskbar | `LSUIElement`: no Dock icon; main window hidden at launch |
-| Popover startup | The runner shapes the hidden window; the main engine shows it. A hidden Flutter view never renders, so the popover engine can't show itself the first time | Same flow |
+| Popover startup | The runner shapes the hidden window; the main engine shows it. A hidden Flutter view never renders, so the popover engine can't show itself the first time | Engine B shows and hides its own panel when the shared popover state changes; the main engine only updates that state |
 | RSS source | `/proc/self/status` `VmRSS` | `task_info(MACH_TASK_BASIC_INFO)` |
 
 GNOME only shows tray icons when the AppIndicator extension is enabled. Ubuntu

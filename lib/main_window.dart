@@ -5,6 +5,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:tray_manager/tray_manager.dart';
 
+import 'global_hotkey.dart';
 import 'linux_tray.dart';
 import 'src/rust/api/agent.dart';
 import 'ui/palette.dart';
@@ -48,6 +49,7 @@ class _MainAppState extends State<MainApp> with TrayListener {
       trayManager.addListener(this);
       _setUpTrayManager();
     }
+    if (Platform.isMacOS) GlobalHotkey.listen(_togglePopover);
     _popover.then((_) {
       if (Platform.environment['AGENT_DEMO_OPEN_PANEL'] == '1') _setPopover(true);
     });
@@ -83,7 +85,14 @@ class _MainAppState extends State<MainApp> with TrayListener {
 
   Future<void> _setPopover(bool visible, {int? anchorX}) async {
     final popover = await _popover;
-    visible ? await popover.show() : await popover.hide();
+    // On macOS the popover is a non-activating NSPanel that engine B shows and
+    // hides itself when the shared state changes; desktop_multi_window's own
+    // window for it stays empty, and showing it would activate the app. On
+    // Linux engine A must show the window: a hidden view never renders, so
+    // engine B can't do it the first time.
+    if (!Platform.isMacOS) {
+      visible ? await popover.show() : await popover.hide();
+    }
     await setPopoverVisible(visible: visible, anchorX: anchorX);
   }
 
