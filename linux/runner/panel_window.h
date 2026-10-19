@@ -10,7 +10,8 @@
 //
 // Channel "agent_tray_demo/panel_window":
 //   configure {width, height} -> resizes and places the window (no show)
-//   focus                     -> raises the shown window and focuses it
+//   focus {anchorX?}          -> raises and focuses the shown window, centered
+//                                under the tray icon when anchorX is given
 //   hide                      -> hides the window
 //   focusLost (to Dart)       -> the window lost focus and should dismiss
 void panel_window_register(FlPluginRegistry* registry);

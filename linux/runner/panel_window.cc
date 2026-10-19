@@ -41,6 +41,20 @@ void configure(GtkWindow* window, int width, int height) {
   }
 }
 
+// Centers the popover horizontally on the tray icon, kept on screen.
+void move_under(GtkWindow* window, int anchor_x) {
+  GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(window));
+  GdkMonitor* monitor = gdk_display_get_monitor_at_point(display, anchor_x, 0);
+  if (monitor == nullptr) return;
+  GdkRectangle area;
+  gdk_monitor_get_workarea(monitor, &area);
+  int width, height;
+  gtk_window_get_size(window, &width, &height);
+  int x = CLAMP(anchor_x - width / 2, area.x + kScreenMargin,
+                area.x + area.width - width - kScreenMargin);
+  gtk_window_move(window, x, area.y + kScreenMargin);
+}
+
 // Clicking anywhere outside the popover dismisses it, like a menu bar popover.
 gboolean focus_out_cb(GtkWidget* widget, GdkEvent* event, gpointer user_data) {
   fl_method_channel_invoke_method(FL_METHOD_CHANNEL(user_data), "focusLost",
@@ -66,6 +80,12 @@ void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
               h ? fl_value_get_int(h) : 300);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (g_strcmp0(method, "focus") == 0) {
+    FlValue* anchor = fl_value_get_type(args) == FL_VALUE_TYPE_MAP
+                          ? fl_value_lookup_string(args, "anchorX")
+                          : nullptr;
+    if (anchor != nullptr && fl_value_get_type(anchor) == FL_VALUE_TYPE_INT) {
+      move_under(window, fl_value_get_int(anchor));
+    }
     gtk_window_present(window);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (g_strcmp0(method, "hide") == 0) {

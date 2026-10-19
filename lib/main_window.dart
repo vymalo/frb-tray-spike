@@ -5,6 +5,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:tray_manager/tray_manager.dart';
 
+import 'linux_tray.dart';
 import 'src/rust/api/agent.dart';
 import 'ui/palette.dart';
 import 'ui/widgets.dart';
@@ -15,7 +16,7 @@ const trayPanelArgument = 'tray_panel';
 const _beforeTrayMark = 'before tray engine';
 const _trayReadyMark = 'tray engine ready';
 
-/// Engine A: owns the tray icon and the (initially hidden) main window, and
+/// Engine A: owns the tray icon and the (initially hidden) chat window, and
 /// starts the popover engine hidden at launch so the first tray click is instant.
 class MainApp extends StatefulWidget {
   const MainApp({super.key});
@@ -40,8 +41,13 @@ class _MainAppState extends State<MainApp> with TrayListener {
       }
       _last = s;
     });
-    trayManager.addListener(this);
-    _setUpTray();
+    if (Platform.isLinux) {
+      // Any click toggles the popover; its menu is Flutter, in the popover.
+      LinuxTray.listen(onActivate: (x) => _togglePopover(anchorX: x));
+    } else {
+      trayManager.addListener(this);
+      _setUpTrayManager();
+    }
     _popover.then((_) {
       if (Platform.environment['AGENT_DEMO_OPEN_PANEL'] == '1') _setPopover(true);
     });
@@ -54,9 +60,9 @@ class _MainAppState extends State<MainApp> with TrayListener {
     super.dispose();
   }
 
-  Future<void> _setUpTray() async {
+  Future<void> _setUpTrayManager() async {
     await trayManager.setIcon('assets/tray_icon.png');
-    if (!Platform.isLinux) await trayManager.setToolTip('Another');
+    await trayManager.setToolTip('Another');
     await trayManager.setContextMenu(Menu(items: [
       MenuItem(key: 'popover', label: 'Open Another'),
       MenuItem(key: 'main', label: 'Open main window'),
@@ -75,35 +81,26 @@ class _MainAppState extends State<MainApp> with TrayListener {
     );
   }
 
-  Future<void> _setPopover(bool visible) async {
+  Future<void> _setPopover(bool visible, {int? anchorX}) async {
     final popover = await _popover;
     visible ? await popover.show() : await popover.hide();
-    await setPopoverVisible(visible: visible);
+    await setPopoverVisible(visible: visible, anchorX: anchorX);
   }
 
-  void _togglePopover() {
+  void _togglePopover({int? anchorX}) {
     // Clicking the tray icon while the popover is open first takes focus away
     // from it, which already dismissed it; that click must not reopen it.
     final hiddenAt = _popoverHiddenAt;
     final justDismissed = hiddenAt != null &&
         DateTime.now().difference(hiddenAt) < const Duration(milliseconds: 400);
-    _setPopover(!(_last?.popoverVisible ?? false) && !justDismissed);
+    _setPopover(!(_last?.popoverVisible ?? false) && !justDismissed, anchorX: anchorX);
   }
 
   Future<void> _showMainWindow() async =>
       (await WindowController.fromCurrentEngine()).show();
 
-  // macOS: a left click on the status item toggles the popover.
-  // Linux AppIndicator never reports clicks; it only opens the menu below.
-  @override
-  void onTrayIconMouseDown() => _togglePopover();
-
-  @override
-  void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
-
-  @override
-  void onTrayMenuItemClick(MenuItem item) {
-    switch (item.key) {
+  void _onMenu(String key) {
+    switch (key) {
       case 'popover':
         _setPopover(true);
       case 'main':
@@ -116,6 +113,16 @@ class _MainAppState extends State<MainApp> with TrayListener {
         exit(0);
     }
   }
+
+  // macOS status item: left click toggles the popover, right click shows the menu.
+  @override
+  void onTrayIconMouseDown() => _togglePopover();
+
+  @override
+  void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
+
+  @override
+  void onTrayMenuItemClick(MenuItem item) => _onMenu(item.key!);
 
   @override
   Widget build(BuildContext context) {
@@ -137,6 +144,8 @@ class _MainAppState extends State<MainApp> with TrayListener {
   }
 }
 
+/// The chat window: the shared conversation, a status line about the two
+/// engines, and a composer. Pure view so tests can render it without Rust.
 class MainWindowView extends StatefulWidget {
   const MainWindowView({
     super.key,
@@ -183,18 +192,18 @@ class _MainWindowViewState extends State<MainWindowView> {
             ? const Center(child: CircularProgressIndicator())
             : Center(
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 680),
-                  child: ListView(
-                    padding: const EdgeInsets.all(24),
-                    children: [
-                      _header(),
-                      const SizedBox(height: 20),
-                      _stateCard(s),
-                      const SizedBox(height: 14),
-                      _memoryCard(s),
-                      const SizedBox(height: 14),
-                      _actions(s),
-                    ],
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                    child: Column(children: [
+                      _header(s),
+                      const SizedBox(height: 8),
+                      _engineStatus(s),
+                      const SizedBox(height: 12),
+                      Expanded(child: _conversation(s)),
+                      const SizedBox(height: 12),
+                      _composer(s),
+                    ]),
                   ),
                 ),
               ),
@@ -202,125 +211,181 @@ class _MainWindowViewState extends State<MainWindowView> {
     );
   }
 
-  Widget _header() => const Row(children: [
-        AppLogo(size: 44),
-        SizedBox(width: 14),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Another',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Palette.ink)),
-          Text('Main engine · agent client',
-              style: TextStyle(fontSize: 13, color: Palette.muted)),
-        ]),
+  Widget _header(AgentSnapshot s) => Row(children: [
+        const AppLogo(size: 40),
+        const SizedBox(width: 12),
+        const Text('Another',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Palette.ink)),
+        const SizedBox(width: 12),
+        if (s.driver.isNotEmpty)
+          StatusChip(
+            icon: s.driver == 'iPhone' ? Icons.devices_outlined : Icons.bolt_outlined,
+            label: s.running ? '${s.task} ${s.done}/${s.total}' : s.task,
+          ),
+        const Spacer(),
+        IconButton(
+          key: const Key('show-popover'),
+          tooltip: 'Show tray popover',
+          onPressed: widget.onShowPopover,
+          icon: const Icon(Icons.space_dashboard_outlined, color: Palette.ink),
+        ),
+        IconButton(
+          key: const Key('remote'),
+          tooltip: 'Simulate iPhone session',
+          onPressed: widget.onRemote,
+          icon: const Icon(Icons.devices_outlined, color: Palette.ink),
+        ),
+        IconButton(
+          tooltip: 'Stop run',
+          onPressed: s.running ? widget.onStop : null,
+          icon: const Icon(Icons.stop_circle_outlined),
+        ),
       ]);
 
-  Widget _card({required String title, required List<Widget> children}) => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          color: Palette.card,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title,
-              style: const TextStyle(
-                  fontSize: 12,
-                  letterSpacing: 0.6,
-                  fontWeight: FontWeight.w700,
-                  color: Palette.muted)),
-          const SizedBox(height: 12),
-          ...children,
-        ]),
-      );
-
-  Widget _stateCard(AgentSnapshot s) => _card(
-        title: 'SHARED AGENT STATE · RUST',
-        children: [
-          Row(children: [
-            ProgressRing(
-              value: s.done / s.total,
-              size: 52,
-              fill: Palette.ringFill,
-              child: const Icon(Icons.code, size: 20, color: Palette.ink),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(s.task,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                Text(
-                  '${s.done}/${s.total} · ${s.running ? 'running' : 'idle'}'
-                  '${s.driver.isEmpty ? '' : ' · driven by ${s.driver}'}',
-                  key: const Key('main-progress'),
-                  style: const TextStyle(color: Palette.muted),
-                ),
-              ]),
-            ),
-            Text('rev ${s.revision}', style: const TextStyle(color: Palette.muted)),
-          ]),
-          const SizedBox(height: 14),
-          Wrap(spacing: 8, runSpacing: 8, children: [
-            for (final (i, e) in s.engines.indexed)
-              StatusChip(icon: Icons.memory, label: 'engine ${i + 1}: $e'),
-          ]),
-        ],
-      );
-
-  Widget _memoryCard(AgentSnapshot s) {
+  /// One line proving the point of the spike: two engines, one state, and
+  /// what the second engine costs.
+  Widget _engineStatus(AgentSnapshot s) {
     int? markKb(String label) =>
         s.memoryMarks.where((m) => m.label == label).firstOrNull?.rssKb;
     final before = markKb(_beforeTrayMark);
     final after = markKb(_trayReadyMark);
-    return _card(title: 'PROCESS MEMORY', children: [
-      Text('RSS now: ${formatMb(s.rssKb)}',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-      const SizedBox(height: 8),
-      for (final m in s.memoryMarks)
-        Text('${m.label}: ${formatMb(m.rssKb)}',
-            style: const TextStyle(color: Palette.muted)),
-      if (before != null && after != null) ...[
-        const SizedBox(height: 8),
-        Text('Second engine cost ≈ +${formatMb(after - before)}',
-            key: const Key('engine-cost'),
-            style: const TextStyle(fontWeight: FontWeight.w700, color: Palette.send)),
-      ] else
-        const Text('Waiting for the popover engine to start…',
-            style: TextStyle(color: Palette.muted)),
-    ]);
+    final cost = before != null && after != null
+        ? 'second engine ≈ +${formatMb(after - before)}'
+        : 'starting popover engine…';
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        '${s.engines.length} engines share this state (${s.engines.join(' + ')}) · '
+        'rev ${s.revision} · RSS ${formatMb(s.rssKb)} · $cost',
+        key: const Key('engine-status'),
+        style: const TextStyle(fontSize: 12, color: Palette.muted),
+      ),
+    );
   }
 
-  Widget _actions(AgentSnapshot s) => _card(title: 'DRIVE THE AGENT', children: [
-        Wrap(spacing: 10, runSpacing: 10, children: [
-          FilledButton.icon(
-            key: const Key('show-popover'),
-            onPressed: widget.onShowPopover,
-            style: FilledButton.styleFrom(backgroundColor: Palette.send),
-            icon: const Icon(Icons.space_dashboard_outlined),
-            label: const Text('Show tray popover'),
-          ),
-          OutlinedButton.icon(
-            key: const Key('remote'),
-            onPressed: widget.onRemote,
-            icon: const Icon(Icons.devices_outlined),
-            label: const Text('Simulate iPhone session'),
-          ),
-          TextButton(onPressed: s.running ? widget.onStop : null, child: const Text('Stop')),
-        ]),
-        const SizedBox(height: 14),
-        TextField(
-          controller: _prompt,
-          onSubmitted: (_) => _send(),
-          decoration: InputDecoration(
-            hintText: 'Ask anything (runs locally, mirrored in the tray)',
-            filled: true,
-            fillColor: Palette.composer,
-            border: OutlineInputBorder(
+  Widget _conversation(AgentSnapshot s) {
+    if (s.messages.isEmpty) {
+      return const Center(
+        child: Text(
+          'Ask anything here, from the tray popover, or from your iPhone.\n'
+          'Every engine sees the same conversation.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Palette.muted, height: 1.5),
+        ),
+      );
+    }
+    final messages = s.messages.reversed.toList();
+    return ListView.builder(
+      reverse: true,
+      itemCount: messages.length,
+      itemBuilder: (context, i) => ChatBubble(
+        message: messages[i],
+        working: i == 0 && s.running,
+        progress: s.done / s.total,
+      ),
+    );
+  }
+
+  Widget _composer(AgentSnapshot s) => Row(children: [
+        Expanded(
+          child: Container(
+            height: 54,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: Palette.card,
               borderRadius: BorderRadius.circular(28),
-              borderSide: BorderSide.none,
             ),
-            suffixIcon: IconButton(
-              onPressed: _send,
-              icon: const Icon(Icons.send_rounded, color: Palette.send),
+            child: Row(children: [
+              const Icon(Icons.add, color: Palette.ink),
+              const SizedBox(width: 10),
+              Expanded(
+                child: TextField(
+                  controller: _prompt,
+                  onSubmitted: (_) => _send(),
+                  decoration: const InputDecoration(
+                    hintText: 'Ask anything',
+                    border: InputBorder.none,
+                    isCollapsed: true,
+                  ),
+                ),
+              ),
+              ProgressRing(
+                value: s.tokensUsed / s.tokensBudget,
+                size: 28,
+                stroke: 2.5,
+                child: const Icon(Icons.account_balance_wallet_outlined,
+                    size: 13, color: Palette.ring),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.mic_none, color: Palette.ink, size: 20),
+            ]),
+          ),
+        ),
+        const SizedBox(width: 10),
+        SizedBox.square(
+          dimension: 54,
+          child: FilledButton(
+            key: const Key('main-send'),
+            onPressed: _send,
+            style: FilledButton.styleFrom(
+              backgroundColor: Palette.send,
+              padding: EdgeInsets.zero,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
             ),
+            child: const Icon(Icons.send_rounded, color: Colors.white),
           ),
         ),
       ]);
+}
+
+class ChatBubble extends StatelessWidget {
+  const ChatBubble({
+    super.key,
+    required this.message,
+    this.working = false,
+    this.progress = 0,
+  });
+
+  final ChatMessage message;
+  final bool working;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final mine = message.fromUser;
+    final label = mine ? 'You · from ${message.author}' : 'Agent';
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Column(
+            crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(fontSize: 11, color: Palette.muted)),
+              const SizedBox(height: 3),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: mine ? Palette.ringFill : Palette.card,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (working) ...[
+                    ProgressRing(value: progress, size: 18, stroke: 2.5),
+                    const SizedBox(width: 10),
+                  ],
+                  Flexible(
+                    child: Text(message.text,
+                        style: const TextStyle(color: Palette.ink, height: 1.4)),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -12,8 +12,10 @@ abstract final class PanelWindow {
   static Future<void> configure() =>
       _channel.invokeMethod('configure', {'width': width, 'height': height});
 
-  /// Brings the (already shown) popover to the front with keyboard focus.
-  static Future<void> focus() => _channel.invokeMethod('focus');
+  /// Brings the (already shown) popover to the front with keyboard focus,
+  /// centered under the tray icon at screen x [anchorX] when it is known.
+  static Future<void> focus({int? anchorX}) =>
+      _channel.invokeMethod('focus', {'anchorX': ?anchorX});
 
   static Future<void> hide() => _channel.invokeMethod('hide');
 

@@ -15,6 +15,17 @@ const STEP_INTERVAL: Duration = Duration::from_millis(450);
 const MEMORY_REFRESH: Duration = Duration::from_secs(1);
 const TOKENS_PER_STEP: u32 = 1_250;
 
+/// One line of the conversation: a prompt from an engine or the phone, or the
+/// mock agent's reply (updated in place while its run progresses).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChatMessage {
+    pub id: u32,
+    pub from_user: bool,
+    /// Where a prompt came from ("main", "tray", "iPhone"), or "agent".
+    pub author: String,
+    pub text: String,
+}
+
 /// Process RSS captured at a labelled moment, e.g. right before the tray engine starts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MemoryMark {
@@ -37,15 +48,22 @@ pub struct AgentSnapshot {
     pub rss_kb: u32,
     /// Whether the tray popover (engine B) is on screen; either engine may change it.
     pub popover_visible: bool,
+    /// Screen x the popover should center on (the tray icon), if known.
+    pub popover_anchor_x: Option<i32>,
+    pub messages: Vec<ChatMessage>,
     /// Bumped on every broadcast so engines can show they see the same revision.
     pub revision: u32,
 }
 
 pub(crate) const REMOTE_DRIVER: &str = "iPhone";
+const AGENT_AUTHOR: &str = "agent";
 
 struct Core {
     snap: AgentSnapshot,
     run_id: u64,
+    next_message_id: u32,
+    /// The agent message that reports on the current run.
+    reply_id: Option<u32>,
 }
 
 impl Core {
@@ -63,20 +81,45 @@ impl Core {
                 memory_marks: Vec::new(),
                 rss_kb: 0,
                 popover_visible: false,
+                popover_anchor_x: None,
+                messages: Vec::new(),
                 revision: 0,
             },
             run_id: 0,
+            next_message_id: 0,
+            reply_id: None,
         }
     }
 
-    fn start_run(&mut self, task: String, total: u32, driver: String) -> u64 {
+    fn push_message(&mut self, from_user: bool, author: &str, text: String) -> u32 {
+        self.next_message_id += 1;
+        let id = self.next_message_id;
+        self.snap.messages.push(ChatMessage { id, from_user, author: author.into(), text });
+        id
+    }
+
+    fn set_reply(&mut self, text: String) {
+        let id = self.reply_id;
+        if let Some(m) = self.snap.messages.iter_mut().find(|m| Some(m.id) == id) {
+            m.text = text;
+        }
+    }
+
+    /// Starts a run for `prompt`, sent by `driver`, superseding any active run.
+    fn start_run(&mut self, prompt: String, task: String, total: u32, driver: String) -> u64 {
         eprintln!("[core] run started: {task} ({total} steps) driven by {driver}");
+        if self.snap.running {
+            self.stop();
+        }
         self.run_id += 1;
         self.snap.task = task;
         self.snap.done = 0;
         self.snap.total = total.max(1);
         self.snap.running = true;
+        self.push_message(true, &driver, prompt);
         self.snap.driver = driver;
+        self.reply_id = Some(self.push_message(false, AGENT_AUTHOR, String::new()));
+        self.set_reply(format!("Working on {}…", self.snap.task));
         self.run_id
     }
 
@@ -88,13 +131,23 @@ impl Core {
         self.snap.done += 1;
         self.snap.tokens_used =
             (self.snap.tokens_used + TOKENS_PER_STEP).min(self.snap.tokens_budget);
-        if self.snap.done >= self.snap.total {
+        let (task, done, total) = (self.snap.task.clone(), self.snap.done, self.snap.total);
+        if done >= total {
             self.snap.running = false;
+            self.set_reply(format!(
+                "Done with {task}: {total} steps. This is a mock agent, so nothing was changed."
+            ));
+        } else {
+            self.set_reply(format!("Working on {task}… step {done} of {total}"));
         }
         self.snap.running
     }
 
     fn stop(&mut self) {
+        if self.snap.running {
+            let (task, done, total) = (self.snap.task.clone(), self.snap.done, self.snap.total);
+            self.set_reply(format!("Stopped {task} at step {done} of {total}."));
+        }
         self.snap.running = false;
         self.run_id += 1;
     }
@@ -168,14 +221,19 @@ pub fn watch_state(sink: StreamSink<AgentSnapshot>) {
 pub fn submit_prompt(text: String, from_engine: String) {
     let task = task_name(&text);
     let total = 10 + (text.len() as u32 % 20);
-    let run_id = core().start_run(task, total, from_engine);
+    let run_id = core().start_run(text, task, total, from_engine);
     broadcast();
     spawn_run(run_id);
 }
 
 /// Simulates a phone taking over the agent: the `checkout` task runs from 0 to 40.
 pub fn start_remote_session() {
-    let run_id = core().start_run("checkout".into(), 40, REMOTE_DRIVER.into());
+    let run_id = core().start_run(
+        "Finish the checkout flow".into(),
+        "checkout".into(),
+        40,
+        REMOTE_DRIVER.into(),
+    );
     broadcast();
     spawn_run(run_id);
 }
@@ -185,8 +243,16 @@ pub fn stop_run() {
     broadcast();
 }
 
-pub fn set_popover_visible(visible: bool) {
-    core().snap.popover_visible = visible;
+/// Shows or hides the tray popover; `anchor_x` is the tray icon's screen x when the
+/// platform reports it, so the popover can open right under the icon.
+pub fn set_popover_visible(visible: bool, anchor_x: Option<i32>) {
+    {
+        let mut core = core();
+        core.snap.popover_visible = visible;
+        if visible {
+            core.snap.popover_anchor_x = anchor_x;
+        }
+    }
     broadcast();
 }
 
@@ -260,7 +326,7 @@ mod tests {
     #[test]
     fn run_completes_after_total_steps() {
         let mut core = Core::new();
-        let id = core.start_run("demo".into(), 3, "main".into());
+        let id = core.start_run("demo it".into(), "demo".into(), 3, "main".into());
         assert!(core.step(id));
         assert!(core.step(id));
         assert!(!core.step(id));
@@ -271,8 +337,8 @@ mod tests {
     #[test]
     fn newer_run_supersedes_older_one() {
         let mut core = Core::new();
-        let old = core.start_run("a".into(), 10, "main".into());
-        let new = core.start_run("b".into(), 10, REMOTE_DRIVER.into());
+        let old = core.start_run("a".into(), "a".into(), 10, "main".into());
+        let new = core.start_run("b".into(), "b".into(), 10, REMOTE_DRIVER.into());
         assert!(!core.step(old));
         assert!(core.step(new));
         assert_eq!(core.snap.done, 1);
@@ -282,7 +348,7 @@ mod tests {
     #[test]
     fn stop_ends_the_active_run() {
         let mut core = Core::new();
-        let id = core.start_run("a".into(), 10, "tray".into());
+        let id = core.start_run("a".into(), "a".into(), 10, "tray".into());
         core.stop();
         assert!(!core.step(id));
         assert!(!core.snap.running);
@@ -292,11 +358,36 @@ mod tests {
     fn tokens_never_exceed_budget() {
         let mut core = Core::new();
         core.snap.tokens_budget = 2_000;
-        let id = core.start_run("a".into(), 10, "main".into());
+        let id = core.start_run("a".into(), "a".into(), 10, "main".into());
         for _ in 0..5 {
             core.step(id);
         }
         assert_eq!(core.snap.tokens_used, 2_000);
+    }
+
+    #[test]
+    fn prompt_and_reply_become_chat_messages() {
+        let mut core = Core::new();
+        let id = core.start_run("Fix login".into(), "fix-login".into(), 2, "tray".into());
+        let user = &core.snap.messages[0];
+        assert!(user.from_user);
+        assert_eq!((user.author.as_str(), user.text.as_str()), ("tray", "Fix login"));
+
+        core.step(id);
+        assert_eq!(core.snap.messages[1].text, "Working on fix-login… step 1 of 2");
+        core.step(id);
+        assert!(core.snap.messages[1].text.starts_with("Done with fix-login"));
+        assert_eq!(core.snap.messages.len(), 2);
+    }
+
+    #[test]
+    fn superseded_run_reply_says_it_stopped() {
+        let mut core = Core::new();
+        let first = core.start_run("a".into(), "a".into(), 10, "main".into());
+        core.step(first);
+        core.start_run("b".into(), "b".into(), 10, REMOTE_DRIVER.into());
+        assert_eq!(core.snap.messages[1].text, "Stopped a at step 1 of 10.");
+        assert_eq!(core.snap.messages.len(), 4);
     }
 
     #[test]

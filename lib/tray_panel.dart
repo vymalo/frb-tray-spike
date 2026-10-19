@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,10 @@ import 'ui/palette.dart';
 import 'ui/widgets.dart';
 
 const trayEngineName = 'tray';
+
+/// Actions in the popover's overflow menu. On Linux this replaces the tray's
+/// native context menu.
+enum PopoverMenu { remote, stop, quit }
 
 /// Entry point for the popover engine (engine B). It is started hidden at
 /// launch so the first tray click opens instantly; the runner has already
@@ -39,7 +44,9 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
     _configureWindow();
     PanelWindow.onFocusLost(_dismiss);
     _visibility = _state.listen((s) {
-      if (s.popoverVisible && !_visible) PanelWindow.focus().ignore();
+      if (s.popoverVisible && !_visible) {
+        PanelWindow.focus(anchorX: s.popoverAnchorX).ignore();
+      }
       _visible = s.popoverVisible;
     });
   }
@@ -65,6 +72,18 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
     setPopoverVisible(visible: false);
   }
 
+  // Same process as the main window, so Quit here ends both engines.
+  void _onMenu(PopoverMenu item) {
+    switch (item) {
+      case PopoverMenu.remote:
+        startRemoteSession();
+      case PopoverMenu.stop:
+        stopRun();
+      case PopoverMenu.quit:
+        exit(0);
+    }
+  }
+
   Future<void> _openMainWindow() async {
     final windows = await WindowController.getAll();
     // The main window is the one desktop_multi_window attached without arguments.
@@ -86,6 +105,7 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
           onSubmit: (text) => submitPrompt(text: text, fromEngine: trayEngineName),
           onDismiss: _dismiss,
           onOpenMainWindow: pluginError == null ? _openMainWindow : null,
+          onMenu: _onMenu,
         ),
       ),
     );
@@ -100,6 +120,7 @@ class TrayPanelView extends StatefulWidget {
     required this.onSubmit,
     this.onDismiss,
     this.onOpenMainWindow,
+    this.onMenu,
     this.pluginError,
   });
 
@@ -107,6 +128,7 @@ class TrayPanelView extends StatefulWidget {
   final ValueChanged<String> onSubmit;
   final VoidCallback? onDismiss;
   final VoidCallback? onOpenMainWindow;
+  final ValueChanged<PopoverMenu>? onMenu;
   final String? pluginError;
 
   @override
@@ -178,6 +200,21 @@ class _TrayPanelViewState extends State<TrayPanelView> {
               onPressed: widget.onOpenMainWindow,
               icon: const Icon(Icons.open_in_new, size: 18, color: Palette.muted),
             ),
+          if (widget.onMenu case final onMenu?)
+            PopupMenuButton<PopoverMenu>(
+              key: const Key('popover-menu'),
+              tooltip: 'More',
+              onSelected: onMenu,
+              icon: const Icon(Icons.more_horiz, size: 18, color: Palette.muted),
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                    value: PopoverMenu.remote, child: Text('Simulate iPhone session')),
+                PopupMenuItem(
+                    value: PopoverMenu.stop, enabled: s.running, child: const Text('Stop run')),
+                const PopupMenuDivider(),
+                const PopupMenuItem(value: PopoverMenu.quit, child: Text('Quit')),
+              ],
+            ),
           Tooltip(
             message: '${s.tokensUsed} / ${s.tokensBudget} tokens',
             child: ProgressRing(
@@ -205,14 +242,22 @@ class _TrayPanelViewState extends State<TrayPanelView> {
             child: const Icon(Icons.code, size: 20, color: Palette.ink),
           ),
           const SizedBox(width: 14),
-          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(s.task,
-                style: const TextStyle(
-                    fontSize: 15, fontWeight: FontWeight.w700, color: Palette.ink)),
-            Text('${s.done}/${s.total}',
-                key: const Key('task-progress'),
-                style: const TextStyle(fontSize: 13, color: Palette.muted)),
-          ]),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(s.task,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700, color: Palette.ink)),
+              Text('${s.done}/${s.total}',
+                  key: const Key('task-progress'),
+                  style: const TextStyle(fontSize: 13, color: Palette.muted)),
+              if (_latestReply(s) case final reply?)
+                Text(reply,
+                    key: const Key('latest-reply'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: Palette.chipText)),
+            ]),
+          ),
         ]),
         const Spacer(),
         _composer(progress, tokens),
@@ -227,6 +272,9 @@ class _TrayPanelViewState extends State<TrayPanelView> {
       ],
     );
   }
+
+  String? _latestReply(AgentSnapshot s) =>
+      s.messages.where((m) => !m.fromUser).lastOrNull?.text;
 
   Widget _driverChip(AgentSnapshot s) {
     if (s.driver.isEmpty) {

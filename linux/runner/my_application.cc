@@ -8,6 +8,7 @@
 #include "flutter/generated_plugin_registrant.h"
 
 #include "desktop_multi_window/desktop_multi_window_plugin.h"
+#include "linux_tray.h"
 #include "panel_window.h"
 
 struct _MyApplication {
@@ -76,6 +77,7 @@ static void my_application_activate(GApplication* application) {
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  linux_tray_register(FL_PLUGIN_REGISTRY(view));
 
   // Every window from desktop_multi_window runs its own Flutter engine, and a
   // new engine starts with no plugins. Register them here, or calls from the

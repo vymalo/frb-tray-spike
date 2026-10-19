@@ -47,10 +47,17 @@ Future<void> main(List<String> args) async {
     expect(run.task, 'refactor-payments');
     expect(run.running, isTrue);
 
-    await until((s) => s.done >= 2);
+    final progressed = await until((s) => s.done >= 2);
+    expect(progressed.messages.first.text, _prompt);
+    expect(progressed.messages.first.author, trayEngineName);
+
+    // The prompt typed in the popover (engine B) shows up in the chat window
+    // (engine A), followed by the agent's live reply.
     await tester.pump();
-    expect(find.textContaining('driven by tray'), findsOneWidget);
-    expect(find.textContaining('Second engine cost'), findsOneWidget);
+    expect(find.text(_prompt), findsOneWidget);
+    expect(find.text('You · from tray'), findsOneWidget);
+    expect(find.textContaining('Working on refactor-payments'), findsOneWidget);
+    expect(find.textContaining('second engine ≈ +'), findsOneWidget);
 
     await stopRun();
   });
@@ -66,8 +73,13 @@ Future<void> _trayEngine() async {
   await watchState().firstWhere((s) => s.popoverVisible);
   final controller = LiveWidgetController(WidgetsBinding.instance);
   final field = find.byType(EditableText);
-  // Rendering starts once the window is shown; wait for the laid-out panel.
-  while (WidgetsBinding.instance.rootElement == null || field.evaluate().isEmpty) {
+  // Rendering starts once the window is shown; wait until the panel is laid
+  // out at the popover's real size, not the 1x1 view of a hidden window.
+  bool laidOut() =>
+      WidgetsBinding.instance.rootElement != null &&
+      field.evaluate().isNotEmpty &&
+      WidgetsBinding.instance.platformDispatcher.views.first.physicalSize.width > 100;
+  while (!laidOut()) {
     await WidgetsBinding.instance.endOfFrame;
     await Future<void>.delayed(const Duration(milliseconds: 100));
   }

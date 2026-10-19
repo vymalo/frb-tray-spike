@@ -6,9 +6,9 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `broadcast`, `core`, `new`, `platform_rss_kb`, `sinks`, `spawn_run`, `start_run`, `step`, `stop`, `task_name`
+// These functions are ignored because they are not marked as `pub`: `broadcast`, `core`, `new`, `platform_rss_kb`, `push_message`, `set_reply`, `sinks`, `spawn_run`, `start_run`, `step`, `stop`, `task_name`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Core`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 
 /// Registers the calling engine and returns how many engines share this state.
 Future<int> attachEngine({required String name}) =>
@@ -31,8 +31,12 @@ Future<void> startRemoteSession() =>
 
 Future<void> stopRun() => RustLib.instance.api.crateApiAgentStopRun();
 
-Future<void> setPopoverVisible({required bool visible}) =>
-    RustLib.instance.api.crateApiAgentSetPopoverVisible(visible: visible);
+/// Shows or hides the tray popover; `anchor_x` is the tray icon's screen x when the
+/// platform reports it, so the popover can open right under the icon.
+Future<void> setPopoverVisible({required bool visible, int? anchorX}) => RustLib
+    .instance
+    .api
+    .crateApiAgentSetPopoverVisible(visible: visible, anchorX: anchorX);
 
 Future<void> recordMemoryMark({required String label}) =>
     RustLib.instance.api.crateApiAgentRecordMemoryMark(label: label);
@@ -56,6 +60,10 @@ class AgentSnapshot {
   /// Whether the tray popover (engine B) is on screen; either engine may change it.
   final bool popoverVisible;
 
+  /// Screen x the popover should center on (the tray icon), if known.
+  final int? popoverAnchorX;
+  final List<ChatMessage> messages;
+
   /// Bumped on every broadcast so engines can show they see the same revision.
   final int revision;
 
@@ -71,6 +79,8 @@ class AgentSnapshot {
     required this.memoryMarks,
     required this.rssKb,
     required this.popoverVisible,
+    this.popoverAnchorX,
+    required this.messages,
     required this.revision,
   });
 
@@ -87,6 +97,8 @@ class AgentSnapshot {
       memoryMarks.hashCode ^
       rssKb.hashCode ^
       popoverVisible.hashCode ^
+      popoverAnchorX.hashCode ^
+      messages.hashCode ^
       revision.hashCode;
 
   @override
@@ -105,7 +117,41 @@ class AgentSnapshot {
           memoryMarks == other.memoryMarks &&
           rssKb == other.rssKb &&
           popoverVisible == other.popoverVisible &&
+          popoverAnchorX == other.popoverAnchorX &&
+          messages == other.messages &&
           revision == other.revision;
+}
+
+/// One line of the conversation: a prompt from an engine or the phone, or the
+/// mock agent's reply (updated in place while its run progresses).
+class ChatMessage {
+  final int id;
+  final bool fromUser;
+
+  /// Where a prompt came from ("main", "tray", "iPhone"), or "agent".
+  final String author;
+  final String text;
+
+  const ChatMessage({
+    required this.id,
+    required this.fromUser,
+    required this.author,
+    required this.text,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ fromUser.hashCode ^ author.hashCode ^ text.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ChatMessage &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          fromUser == other.fromUser &&
+          author == other.author &&
+          text == other.text;
 }
 
 /// Process RSS captured at a labelled moment, e.g. right before the tray engine starts.

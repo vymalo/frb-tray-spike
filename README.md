@@ -5,8 +5,9 @@
 
 A minimal mock of a tray-first agent client, like a menu bar app: launching
 it shows only a tray icon, and the tray opens a **popover that runs in a second
-Flutter engine in the same process**. The main window (first engine) is
-optional and opened on demand. It demonstrates three things:
+Flutter engine in the same process**. The main window (first engine) is an
+optional chat window, opened on demand. Every engine shows the same
+conversation. It demonstrates three things:
 
 1. **Shared state through flutter_rust_bridge.** Both engines call
    `RustLib.init()` in their own isolate, but the Rust library is loaded once per
@@ -24,7 +25,7 @@ optional and opened on demand. It demonstrates three things:
 
 ```
 ┌──────────────── one OS process ─────────────────┐
-│  Engine A: main window      Engine B: tray panel │
+│  Engine A: chat window      Engine B: popover    │
 │        │                           │             │
 │        └──── FRB ──► Rust core ◄───┘             │
 │              (static AgentSnapshot)              │
@@ -54,17 +55,19 @@ a Mac you can also just clone the repo and run `flutter run -d macos`.
 ### Try it
 
 - Launch it: only the tray icon appears.
-- **macOS:** click the menu-bar icon to toggle the popover under it.
-  **Linux:** click the icon, then **Open Another** in its menu.
-- Type an instruction in "Ask anything" and send it. The run starts in Rust
-  and the popover shows its progress. Click outside or press <kbd>Esc</kbd> to
-  dismiss it.
-- The popover's open-in-window button (or **Open main window** in the tray
-  menu) shows the main window. It shows the same run live, plus the memory
-  cost of the second engine. Closing it only hides it; **Quit** is in the tray
-  menu.
-- **Simulate iPhone session** (tray menu or main window) runs `checkout` from
-  0 to 40. Both engines show "Driven from iPhone" and the same revision.
+- Click the tray icon (menu bar on macOS, top bar on Linux) to toggle the
+  popover under it.
+- Type an instruction in "Ask anything" and send it. The run starts in Rust,
+  the popover shows its progress, and the chat window gets the prompt and the
+  agent's live reply. Click outside or press <kbd>Esc</kbd> to dismiss the
+  popover.
+- The popover's open-in-window button shows the chat window. It shows the same
+  conversation live, plus the memory cost of the second engine. Closing it only
+  hides it.
+- The popover's `⋯` menu has **Simulate iPhone session**, **Stop run** and
+  **Quit**. On macOS the status item's right-click menu has them too.
+- **Simulate iPhone session** runs `checkout` from 0 to 40. Both engines show
+  "Driven from iPhone", the same step and the same revision.
 - Run with `AGENT_DEMO_SKIP_PLUGINS=1` to skip plugin registration on the
   popover engine. It then shows the `MissingPluginException` it gets.
 - Run with `AGENT_DEMO_OPEN_PANEL=1` to open the popover at launch.
@@ -84,20 +87,25 @@ It installs to `~/.local/share/agent_tray_demo`, adds `agent-tray-demo` to
 
 | | Linux (GNOME) | macOS |
 |---|---|---|
-| Tray | AppIndicator: menu only, no click events, so the popover opens from the menu | NSStatusItem: left click toggles the popover, right click opens the menu |
-| Popover position | Top right through X11; `main.cc` forces XWayland (even over `GDK_BACKEND=wayland`) because Wayland ignores window moves | Centered under the status item |
+| Tray | X11 tray icon (`GtkStatusIcon`, `linux/runner/linux_tray.cc`): any click toggles the popover, whose `⋯` menu replaces a native menu | NSStatusItem (`tray_manager`): left click toggles the popover, right click opens the menu |
+| Popover position | Under the icon through X11; `main.cc` forces XWayland (even over `GDK_BACKEND=wayland`) because Wayland ignores window moves | Centered under the status item |
 | Dock / taskbar | Main window hidden at launch; popover skips the taskbar | `LSUIElement`: no Dock icon; main window hidden at launch |
 | Popover startup | The runner shapes the hidden window; the main engine shows it. A hidden Flutter view never renders, so the popover engine can't show itself the first time | Same flow |
 | RSS source | `/proc/self/status` `VmRSS` | `task_info(MACH_TASK_BASIC_INFO)` |
 
 GNOME only shows tray icons when the AppIndicator extension is enabled. Ubuntu
-enables it by default.
+enables it by default. The Linux tray is a legacy X11 icon rather than an
+AppIndicator on purpose: the extension opens an AppIndicator's native menu on
+a single left click and only reports a double click to the app, while it
+forwards every click on an X11 tray icon. It forwards them as synthetic core X
+events, which GTK 3 ignores (it reads pointer input from XInput2), so
+`linux_tray.cc` reads them with a GDK event filter.
 
 ## Tests
 
 ```bash
 cargo test --manifest-path rust/Cargo.toml   # state machine, RSS reader
-flutter test                                 # panel and main window views
+flutter test                                 # popover and chat window views
 flutter test integration_test -d linux       # real Rust lib: two subscribers see the same run
 
 # Whole app, both engines: the tray engine types a prompt into the real panel
@@ -110,12 +118,14 @@ flutter drive -d linux --driver=test_driver/integration_test.dart \
 ## Layout
 
 ```
-rust/src/api/agent.rs        shared state, stream fan-out, mock driver, RSS
-lib/main.dart                picks main window or tray panel from engine args
-lib/main_window.dart         engine A: tray icon and menu, starts engine B hidden, main window
+rust/src/api/agent.rs        shared state, chat, stream fan-out, mock agent, RSS
+lib/main.dart                picks chat window or popover from engine args
+lib/main_window.dart         engine A: tray, starts engine B hidden, chat window
 lib/tray_panel.dart          engine B: the popover from the wireframe
+lib/linux_tray.dart          clicks from the Linux tray icon
+lib/panel_window.dart        channel to the runner's native popover helper
+linux/runner/linux_tray.cc   Linux tray icon (X11) and its click forwarding
+linux/runner/panel_window.cc borderless, always-on-top popover window (GTK)
 linux/packaging/             install script, desktop entry, icon
-lib/panel_window.dart        channel to the runner's native panel helper
-linux/runner/panel_window.cc borderless, top-right, always-on-top window (GTK)
-macos/Runner/MainFlutterWindow.swift  same for AppKit, plus engine B registration
+macos/Runner/MainFlutterWindow.swift  popover window for AppKit, plus engine B registration
 ```

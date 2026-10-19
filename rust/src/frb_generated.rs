@@ -201,11 +201,12 @@ fn wire__crate__api__agent__set_popover_visible_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_visible = <bool>::sse_decode(&mut deserializer);
+            let api_anchor_x = <Option<i32>>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Result::<_, ()>::Ok({
-                        crate::api::agent::set_popover_visible(api_visible);
+                        crate::api::agent::set_popover_visible(api_visible, api_anchor_x);
                     })?;
                     Ok(output_ok)
                 })())
@@ -398,6 +399,8 @@ impl SseDecode for crate::api::agent::AgentSnapshot {
         let mut var_memoryMarks = <Vec<crate::api::agent::MemoryMark>>::sse_decode(deserializer);
         let mut var_rssKb = <u32>::sse_decode(deserializer);
         let mut var_popoverVisible = <bool>::sse_decode(deserializer);
+        let mut var_popoverAnchorX = <Option<i32>>::sse_decode(deserializer);
+        let mut var_messages = <Vec<crate::api::agent::ChatMessage>>::sse_decode(deserializer);
         let mut var_revision = <u32>::sse_decode(deserializer);
         return crate::api::agent::AgentSnapshot {
             task: var_task,
@@ -411,6 +414,8 @@ impl SseDecode for crate::api::agent::AgentSnapshot {
             memory_marks: var_memoryMarks,
             rss_kb: var_rssKb,
             popover_visible: var_popoverVisible,
+            popover_anchor_x: var_popoverAnchorX,
+            messages: var_messages,
             revision: var_revision,
         };
     }
@@ -423,6 +428,29 @@ impl SseDecode for bool {
     }
 }
 
+impl SseDecode for crate::api::agent::ChatMessage {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_id = <u32>::sse_decode(deserializer);
+        let mut var_fromUser = <bool>::sse_decode(deserializer);
+        let mut var_author = <String>::sse_decode(deserializer);
+        let mut var_text = <String>::sse_decode(deserializer);
+        return crate::api::agent::ChatMessage {
+            id: var_id,
+            from_user: var_fromUser,
+            author: var_author,
+            text: var_text,
+        };
+    }
+}
+
+impl SseDecode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
+    }
+}
+
 impl SseDecode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -430,6 +458,18 @@ impl SseDecode for Vec<String> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<String>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::agent::ChatMessage> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::agent::ChatMessage>::sse_decode(deserializer));
         }
         return ans_;
     }
@@ -471,6 +511,17 @@ impl SseDecode for crate::api::agent::MemoryMark {
     }
 }
 
+impl SseDecode for Option<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<i32>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -488,13 +539,6 @@ impl SseDecode for u8 {
 impl SseDecode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {}
-}
-
-impl SseDecode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        deserializer.cursor.read_i32::<NativeEndian>().unwrap()
-    }
 }
 
 fn pde_ffi_dispatcher_primary_impl(
@@ -548,6 +592,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::agent::AgentSnapshot {
             self.memory_marks.into_into_dart().into_dart(),
             self.rss_kb.into_into_dart().into_dart(),
             self.popover_visible.into_into_dart().into_dart(),
+            self.popover_anchor_x.into_into_dart().into_dart(),
+            self.messages.into_into_dart().into_dart(),
             self.revision.into_into_dart().into_dart(),
         ]
         .into_dart()
@@ -561,6 +607,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::agent::AgentSnapshot>
     for crate::api::agent::AgentSnapshot
 {
     fn into_into_dart(self) -> crate::api::agent::AgentSnapshot {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::agent::ChatMessage {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.id.into_into_dart().into_dart(),
+            self.from_user.into_into_dart().into_dart(),
+            self.author.into_into_dart().into_dart(),
+            self.text.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::agent::ChatMessage
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::agent::ChatMessage>
+    for crate::api::agent::ChatMessage
+{
+    fn into_into_dart(self) -> crate::api::agent::ChatMessage {
         self
     }
 }
@@ -620,6 +689,8 @@ impl SseEncode for crate::api::agent::AgentSnapshot {
         <Vec<crate::api::agent::MemoryMark>>::sse_encode(self.memory_marks, serializer);
         <u32>::sse_encode(self.rss_kb, serializer);
         <bool>::sse_encode(self.popover_visible, serializer);
+        <Option<i32>>::sse_encode(self.popover_anchor_x, serializer);
+        <Vec<crate::api::agent::ChatMessage>>::sse_encode(self.messages, serializer);
         <u32>::sse_encode(self.revision, serializer);
     }
 }
@@ -631,12 +702,39 @@ impl SseEncode for bool {
     }
 }
 
+impl SseEncode for crate::api::agent::ChatMessage {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.id, serializer);
+        <bool>::sse_encode(self.from_user, serializer);
+        <String>::sse_encode(self.author, serializer);
+        <String>::sse_encode(self.text, serializer);
+    }
+}
+
+impl SseEncode for i32 {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
+    }
+}
+
 impl SseEncode for Vec<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <String>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::agent::ChatMessage> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::agent::ChatMessage>::sse_encode(item, serializer);
         }
     }
 }
@@ -669,6 +767,16 @@ impl SseEncode for crate::api::agent::MemoryMark {
     }
 }
 
+impl SseEncode for Option<i32> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <i32>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for u32 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -686,13 +794,6 @@ impl SseEncode for u8 {
 impl SseEncode for () {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {}
-}
-
-impl SseEncode for i32 {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        serializer.cursor.write_i32::<NativeEndian>(self).unwrap();
-    }
 }
 
 #[cfg(not(target_family = "wasm"))]

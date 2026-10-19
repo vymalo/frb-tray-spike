@@ -9,6 +9,7 @@ AgentSnapshot snapshot({
   String driver = 'iPhone',
   int done = 28,
   List<MemoryMark> marks = const [],
+  List<ChatMessage> messages = const [],
 }) =>
     AgentSnapshot(
       task: 'checkout',
@@ -22,6 +23,8 @@ AgentSnapshot snapshot({
       memoryMarks: marks,
       rssKb: 204800,
       popoverVisible: true,
+      popoverAnchorX: null,
+      messages: messages,
       revision: 7,
     );
 
@@ -78,6 +81,21 @@ void main() {
       expect(opened, isTrue);
     });
 
+    testWidgets('menu replaces the native tray menu', (tester) async {
+      final chosen = <PopoverMenu>[];
+      await pumpPanel(
+        tester,
+        TrayPanelView(snapshot: snapshot(), onSubmit: (_) {}, onMenu: chosen.add),
+      );
+      await tester.tap(find.byKey(const Key('popover-menu')));
+      await tester.pumpAndSettle();
+      expect(find.text('Simulate iPhone session'), findsOneWidget);
+      expect(find.text('Quit'), findsOneWidget);
+      await tester.tap(find.text('Simulate iPhone session'));
+      await tester.pumpAndSettle();
+      expect(chosen, [PopoverMenu.remote]);
+    });
+
     testWidgets('shows missing plugin registration', (tester) async {
       await pumpPanel(
         tester,
@@ -93,29 +111,69 @@ void main() {
   });
 
   group('MainWindowView', () {
-    Widget view(AgentSnapshot s, {VoidCallback? onShowPopover}) => host(MainWindowView(
+    Widget view(AgentSnapshot s,
+            {VoidCallback? onShowPopover, ValueChanged<String>? onSubmit}) =>
+        host(MainWindowView(
           snapshot: s,
           onShowPopover: onShowPopover ?? () {},
           onRemote: () {},
           onStop: () {},
-          onSubmit: (_) {},
+          onSubmit: onSubmit ?? (_) {},
         ));
 
-    testWidgets('waits for the popover engine, then can show it', (tester) async {
+    const conversation = [
+      ChatMessage(id: 1, fromUser: true, author: 'tray', text: 'refactor payments'),
+      ChatMessage(id: 2, fromUser: false, author: 'agent', text: 'Working on refactor-payments… step 3 of 27'),
+    ];
+
+    testWidgets('shows the shared conversation with where prompts came from', (tester) async {
+      await tester.pumpWidget(view(snapshot(messages: conversation)));
+      expect(find.text('refactor payments'), findsOneWidget);
+      expect(find.text('You · from tray'), findsOneWidget);
+      expect(find.text('Working on refactor-payments… step 3 of 27'), findsOneWidget);
+    });
+
+    testWidgets('sends from the chat composer', (tester) async {
+      final sent = <String>[];
+      await tester.pumpWidget(view(snapshot(), onSubmit: sent.add));
+      expect(find.textContaining('Ask anything here'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'write tests');
+      await tester.tap(find.byKey(const Key('main-send')));
+      expect(sent, ['write tests']);
+    });
+
+    testWidgets('can show the popover', (tester) async {
       var opened = false;
       await tester.pumpWidget(view(snapshot(), onShowPopover: () => opened = true));
-      expect(find.text('Waiting for the popover engine to start…'), findsOneWidget);
       await tester.tap(find.byKey(const Key('show-popover')));
       expect(opened, isTrue);
     });
 
-    testWidgets('reports the second engine memory cost', (tester) async {
+    testWidgets('reports both engines and the second engine memory cost', (tester) async {
+      await tester.pumpWidget(view(snapshot()));
+      expect(find.textContaining('starting popover engine'), findsOneWidget);
       await tester.pumpWidget(view(snapshot(marks: const [
         MemoryMark(label: 'before tray engine', rssKb: 200 * 1024),
         MemoryMark(label: 'tray engine ready', rssKb: 245 * 1024),
       ])));
-      expect(find.text('Second engine cost ≈ +45.0 MB'), findsOneWidget);
-      expect(find.text('engine 2: tray'), findsOneWidget);
+      final status = tester.widget<Text>(find.byKey(const Key('engine-status'))).data!;
+      expect(status, contains('2 engines share this state (main + tray)'));
+      expect(status, contains('second engine ≈ +45.0 MB'));
     });
+  });
+
+  testWidgets('popover shows the latest agent reply', (tester) async {
+    tester.view.physicalSize = const Size(440, 330);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(host(TrayPanelView(
+      snapshot: snapshot(messages: const [
+        ChatMessage(id: 1, fromUser: true, author: 'main', text: 'hi'),
+        ChatMessage(id: 2, fromUser: false, author: 'agent', text: 'Done with hi'),
+      ]),
+      onSubmit: (_) {},
+    )));
+    expect(find.text('Done with hi'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }
