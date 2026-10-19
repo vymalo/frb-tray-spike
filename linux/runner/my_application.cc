@@ -83,6 +83,14 @@ static void my_application_activate(GApplication* application) {
   // new engine starts with no plugins. Register them here, or calls from the
   // tray panel fail with MissingPluginException. AGENT_DEMO_SKIP_PLUGINS=1
   // leaves them out to show that failure.
+  // Windows added from now on are desktop_multi_window's, i.e. the popover;
+  // they still need their transparent visual before they are realized.
+  g_signal_connect(application, "window-added",
+                   G_CALLBACK(+[](GtkApplication*, GtkWindow* added, gpointer) {
+                     panel_window_prepare_visual(added);
+                   }),
+                   nullptr);
+
   if (g_strcmp0(g_getenv("AGENT_DEMO_SKIP_PLUGINS"), "1") != 0) {
     desktop_multi_window_plugin_set_window_created_callback(
         [](FlPluginRegistry* registry) {

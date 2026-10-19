@@ -119,7 +119,8 @@ final class PopoverPanel: NSPanel {
 /// not through desktop_multi_window.
 ///
 /// Channel "agent_tray_demo/panel_window":
-///   configure {width, height} -> resizes and places the panel (no show)
+///   configure {width, height} -> resizes and places the panel (no show);
+///                                answers {transparent: true}
 ///   focus                     -> places it under the icon, shows it and focuses it
 ///   hide                      -> hides the panel
 ///   focusLost (to Dart)       -> the panel lost focus and should dismiss
@@ -176,7 +177,7 @@ class PanelWindowPlugin: NSObject, FlutterPlugin {
         width: CGFloat(args["width"] as? Int ?? Int(Self.defaultSize.width)),
         height: CGFloat(args["height"] as? Int ?? Int(Self.defaultSize.height)))
       place()
-      result(nil)
+      result(["transparent": true])
     case "focus":
       place()
       // A non-activating panel takes key focus without activating the app.

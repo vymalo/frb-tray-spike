@@ -16,6 +16,10 @@ GtkWindow* window_for(FlView* view) {
 
 void configure(GtkWindow* window, int width, int height) {
   gtk_window_set_decorated(window, FALSE);
+  // A utility window floats above normal windows and stays out of the window
+  // switcher. Menu-type hints would match a popover more closely, but window
+  // managers may not give those keyboard focus, and the text field needs it.
+  gtk_window_set_type_hint(window, GDK_WINDOW_TYPE_HINT_UTILITY);
   gtk_window_set_keep_above(window, TRUE);
   gtk_window_set_skip_taskbar_hint(window, TRUE);
   gtk_window_set_skip_pager_hint(window, TRUE);
@@ -78,7 +82,12 @@ void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
     FlValue* h = fl_value_lookup_string(args, "height");
     configure(window, w ? fl_value_get_int(w) : 400,
               h ? fl_value_get_int(h) : 300);
-    response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
+    g_autoptr(FlValue) result = fl_value_new_map();
+    fl_value_set_string_take(
+        result, "transparent",
+        fl_value_new_bool(GPOINTER_TO_INT(g_object_get_data(
+            G_OBJECT(user_data), "panel_window_transparent"))));
+    response = FL_METHOD_RESPONSE(fl_method_success_response_new(result));
   } else if (g_strcmp0(method, "focus") == 0) {
     FlValue* anchor = fl_value_get_type(args) == FL_VALUE_TYPE_MAP
                           ? fl_value_lookup_string(args, "anchorX")
@@ -100,6 +109,19 @@ void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
 
 }  // namespace
 
+void panel_window_prepare_visual(GtkWindow* window) {
+  GtkWidget* widget = GTK_WIDGET(window);
+  GdkScreen* screen = gtk_widget_get_screen(widget);
+  GdkVisual* rgba = gdk_screen_get_rgba_visual(screen);
+  if (rgba == nullptr || !gdk_screen_is_composited(screen) ||
+      gtk_widget_get_realized(widget)) {
+    return;
+  }
+  gtk_widget_set_visual(widget, rgba);
+  // Keeps GTK from painting the theme's opaque window background.
+  gtk_widget_set_app_paintable(widget, TRUE);
+}
+
 void panel_window_register(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) registrar =
       fl_plugin_registry_get_registrar_for_plugin(registry, "PanelWindow");
@@ -118,6 +140,17 @@ void panel_window_register(FlPluginRegistry* registry) {
   // than as a full-size decorated window.
   GtkWindow* window = window_for(view);
   if (window != nullptr) {
+    // panel_window_prepare_visual gave the window an alpha channel; let the
+    // Flutter view draw on a transparent background to use it.
+    gboolean transparent =
+        gtk_widget_get_visual(GTK_WIDGET(window)) ==
+        gdk_screen_get_rgba_visual(gtk_widget_get_screen(GTK_WIDGET(window)));
+    if (transparent) {
+      GdkRGBA clear = {0, 0, 0, 0};
+      fl_view_set_background_color(view, &clear);
+    }
+    g_object_set_data(G_OBJECT(view), "panel_window_transparent",
+                      GINT_TO_POINTER(transparent));
     configure(window, kPanelWidth, kPanelHeight);
     g_signal_connect_object(window, "focus-out-event", G_CALLBACK(focus_out_cb),
                             channel, static_cast<GConnectFlags>(0));

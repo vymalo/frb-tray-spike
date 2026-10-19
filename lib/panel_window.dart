@@ -8,9 +8,14 @@ abstract final class PanelWindow {
   static const width = 440;
   static const height = 330;
 
-  /// Shapes and places the window as a popover without showing it.
-  static Future<void> configure() =>
-      _channel.invokeMethod('configure', {'width': width, 'height': height});
+  /// Shapes and places the window as a popover without showing it. Returns
+  /// whether the window is transparent around the card (a compositing
+  /// desktop on Linux, always on macOS).
+  static Future<bool> configure() async {
+    final result = await _channel.invokeMapMethod<String, Object?>(
+        'configure', {'width': width, 'height': height});
+    return result?['transparent'] == true;
+  }
 
   /// Brings the (already shown) popover to the front with keyboard focus,
   /// centered under the tray icon at screen x [anchorX] when it is known.

@@ -37,6 +37,7 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
   late final StreamSubscription<AgentSnapshot> _visibility;
   var _visible = false;
   String? _pluginError;
+  var _transparent = false;
 
   @override
   void initState() {
@@ -64,7 +65,8 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
   // Also how this engine finds out whether the runner registered its plugins.
   Future<void> _configureWindow() async {
     try {
-      await PanelWindow.configure();
+      final transparent = await PanelWindow.configure();
+      if (mounted) setState(() => _transparent = transparent);
     } on MissingPluginException catch (e) {
       setState(() => _pluginError = e.toString());
     }
@@ -110,8 +112,8 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
           onDismiss: _dismiss,
           onOpenMainWindow: pluginError == null ? _openMainWindow : null,
           onMenu: _onMenu,
-          // The macOS panel is transparent, so only the card shows.
-          transparentBackdrop: Platform.isMacOS,
+          // When the window is see-through, only the card shows.
+          transparentBackdrop: _transparent,
         ),
       ),
     );
