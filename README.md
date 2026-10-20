@@ -7,7 +7,9 @@ A minimal mock of a tray-first agent client, like a menu bar app: launching
 it shows only a tray icon, and the tray opens a **popover that runs in a second
 Flutter engine in the same process**. The main window (first engine) is an
 optional chat window, opened on demand. Every engine shows the same
-conversation. It demonstrates three things:
+conversation. [PROOF-ONE-PROCESS.md](PROOF-ONE-PROCESS.md) shows, from the
+running app and the code, that both engines live in one process and share one
+Rust state. It demonstrates three things:
 
 1. **Shared state through flutter_rust_bridge.** Both engines call
    `RustLib.init()` in their own isolate, but the Rust library is loaded once per
