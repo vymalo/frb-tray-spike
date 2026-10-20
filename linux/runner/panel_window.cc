@@ -1,6 +1,9 @@
 #include "panel_window.h"
 
+#include <gdk/gdkx.h>
 #include <gtk/gtk.h>
+
+#include "linux_tray.h"
 
 namespace {
 
@@ -59,6 +62,24 @@ void move_under(GtkWindow* window, int anchor_x) {
   gtk_window_move(window, x, area.y + kScreenMargin);
 }
 
+// Shows the popover with keyboard focus. GNOME's focus-stealing prevention
+// only focuses a window that asks for it on behalf of a recent user action;
+// otherwise it maps the window unfocused and flags it "demands attention".
+// An unfocused popover can never lose focus, so click-outside couldn't close
+// it. The timestamp of the tray click that opened it is that user action.
+// Opened another way (the chat window's button), the current server time
+// stands in: the request still follows a click the user just made.
+void present_focused(GtkWindow* window) {
+  GdkWindow* gdk_window = gtk_widget_get_window(GTK_WIDGET(window));
+  guint32 time = linux_tray_last_click_time();
+  if (gdk_window != nullptr && GDK_IS_X11_WINDOW(gdk_window)) {
+    guint32 now = gdk_x11_get_server_time(gdk_window);
+    // A click older than a couple of seconds didn't open this popover.
+    if (time == 0 || now - time > 2000) time = now;
+  }
+  gtk_window_present_with_time(window, time);
+}
+
 // Clicking anywhere outside the popover dismisses it, like a menu bar popover.
 gboolean focus_out_cb(GtkWidget* widget, GdkEvent* event, gpointer user_data) {
   fl_method_channel_invoke_method(FL_METHOD_CHANNEL(user_data), "focusLost",
@@ -95,7 +116,7 @@ void method_call_cb(FlMethodChannel* channel, FlMethodCall* method_call,
     if (anchor != nullptr && fl_value_get_type(anchor) == FL_VALUE_TYPE_INT) {
       move_under(window, fl_value_get_int(anchor));
     }
-    gtk_window_present(window);
+    present_focused(window);
     response = FL_METHOD_RESPONSE(fl_method_success_response_new(nullptr));
   } else if (g_strcmp0(method, "hide") == 0) {
     gtk_widget_hide(GTK_WIDGET(window));

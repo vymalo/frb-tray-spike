@@ -20,6 +20,9 @@ struct Tray {
   gint64 last_click_us;
 };
 
+// X server time of the last click on the icon; see linux_tray_last_click_time.
+guint32 last_click_x_time = 0;
+
 std::string icon_path() {
   g_autofree gchar* exe = g_file_read_link("/proc/self/exe", nullptr);
   g_autofree gchar* dir = g_path_get_dirname(exe);
@@ -63,6 +66,7 @@ GdkFilterReturn x_event_filter(GdkXEvent* xevent, GdkEvent*, gpointer data) {
   }
   int x = event->xbutton.x_root > 0 ? event->xbutton.x_root
                                     : icon_center_x(tray->icon);
+  last_click_x_time = static_cast<guint32>(event->xbutton.time);
   send_activate(tray, x);
   return GDK_FILTER_REMOVE;
 }
@@ -70,6 +74,7 @@ GdkFilterReturn x_event_filter(GdkXEvent* xevent, GdkEvent*, gpointer data) {
 // Desktops that deliver real (XInput2) clicks to tray icons, such as KDE or
 // XFCE, come through GTK's own signals.
 void activate_cb(GtkStatusIcon* icon, gpointer data) {
+  last_click_x_time = gtk_get_current_event_time();
   send_activate(static_cast<Tray*>(data), icon_center_x(icon));
 }
 
@@ -78,6 +83,8 @@ void popup_menu_cb(GtkStatusIcon* icon, guint, guint, gpointer data) {
 }
 
 }  // namespace
+
+guint32 linux_tray_last_click_time() { return last_click_x_time; }
 
 void linux_tray_register(FlPluginRegistry* registry) {
   g_autoptr(FlPluginRegistrar) registrar =

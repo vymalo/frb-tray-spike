@@ -15,4 +15,9 @@
 //   activate {x}   the icon was clicked; x is its screen position, or -1
 void linux_tray_register(FlPluginRegistry* registry);
 
+// X server timestamp of the most recent click on the tray icon, or 0. The
+// popover passes it to the window manager as the reason it takes focus; both
+// engines' runner code is in this one process, so no channel is needed.
+guint32 linux_tray_last_click_time();
+
 #endif  // RUNNER_LINUX_TRAY_H_
