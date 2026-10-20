@@ -97,14 +97,25 @@ void main() {
     });
 
     testWidgets('can leave the area around the card transparent', (tester) async {
+      BoxDecoration card() => tester
+          .widgetList<Container>(find.byType(Container))
+          .map((c) => c.decoration)
+          .whereType<BoxDecoration>()
+          .firstWhere((d) => d.color == Palette.card);
+
+      // Opaque window: the card fills it, so there is no frame around it.
       await pumpPanel(tester, TrayPanelView(snapshot: snapshot(), onSubmit: (_) {}));
-      expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor, isNull);
+      expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor, Palette.card);
+      expect(card().borderRadius, isNull);
+      expect(card().boxShadow, isNull);
 
       await pumpPanel(
         tester,
         TrayPanelView(snapshot: snapshot(), onSubmit: (_) {}, transparentBackdrop: true),
       );
       expect(tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor, Colors.transparent);
+      expect(card().borderRadius, BorderRadius.circular(22));
+      expect(card().boxShadow, isNotEmpty);
       expect(find.text('Driven from iPhone'), findsOneWidget);
     });
 
