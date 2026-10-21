@@ -20,28 +20,42 @@ code, that it really is one process with two engines and one Rust state.
 
 ### The big picture
 
+```mermaid
+flowchart TB
+    subgraph PROC["One OS process: agent_tray_demo"]
+        direction TB
+        subgraph RUNNER["Native runner: GTK on Linux, AppKit on macOS"]
+            TRAY["Tray icon"]
+            WIN["Popover window helper<br/>shape, transparency, placement, focus"]
+            KEY["⌥ Space shortcut<br/>(macOS)"]
+        end
+        subgraph A["Flutter engine A · Dart isolate 1"]
+            A1["Owns the tray, toggles the popover<br/>lib/main_window.dart"]
+            A2["Chat window, hidden until opened<br/>lib/main_window.dart"]
+        end
+        subgraph B["Flutter engine B · Dart isolate 2"]
+            B1["Popover UI, 'Ask anything'<br/>lib/tray_panel.dart"]
+        end
+        subgraph RUST["Rust library, loaded once: rust/src/api/agent.rs"]
+            STATE[("Shared AgentSnapshot<br/>task, progress, chat,<br/>popover open/closed, engines")]
+            AGENT["Mock agent thread"]
+        end
+    end
+
+    TRAY -- "click (platform channel)" --> A1
+    KEY -- "toggle (platform channel)" --> A1
+    A1 -. "creates at launch, hidden<br/>(desktop_multi_window)" .-> B
+    B1 -- "focus / hide (platform channel)" --> WIN
+    WIN -- "focusLost" --> B1
+    A -- "FFI calls via FRB" --> STATE
+    B -- "FFI calls via FRB" --> STATE
+    AGENT -- "updates" --> STATE
+    STATE == "pushes every change<br/>(watchState stream)" ==> A
+    STATE == "pushes every change<br/>(watchState stream)" ==> B
 ```
-┌──────────────────────────── one OS process: agent_tray_demo ─────────────────────────────┐
-│                                                                                           │
-│  Native runner (the host app: GTK on Linux, AppKit on macOS)                              │
-│  • tray icon · popover window shape and position · ⌥ Space (macOS)                       │
-│        │ platform channels                              │ platform channels               │
-│        ▼                                                ▼                                 │
-│  ┌──────────── Flutter engine A ────────────┐   ┌──────────── Flutter engine B ────────┐  │
-│  │ Dart isolate 1 (its own memory)          │   │ Dart isolate 2 (its own memory)      │  │
-│  │ lib/main_window.dart                     │   │ lib/tray_panel.dart                  │  │
-│  │ • owns the tray, toggles the popover     │   │ • the popover UI ("Ask anything")    │  │
-│  │ • chat window (hidden until opened)      │   │ • started hidden at launch           │  │
-│  │ • creates engine B at launch             │   │                                      │  │
-│  └───────────────────┬──────────────────────┘   └──────────────────┬───────────────────┘  │
-│                      │ FFI calls (FRB)                              │ FFI calls (FRB)      │
-│                      ▼                                              ▼                      │
-│  ┌──────────────── Rust library: librust_lib_agent_tray_demo.so (loaded once) ─────────┐  │
-│  │ one shared AgentSnapshot: task, progress, chat messages, popover open/closed,       │  │
-│  │ engines, memory · every change is pushed to a stream per engine · mock agent thread │  │
-│  └──────────────────────────────────────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────────────────────────────────┘
-```
+
+Solid arrows are calls, dotted is creation, and thick arrows are state pushed
+from Rust to the engines.
 
 ### The key ideas
 
@@ -80,26 +94,34 @@ code, that it really is one process with two engines and one Rust state.
 
 You type "refactor payments" in the popover and press send:
 
-1. **Engine B** (popover) calls `submitPrompt(text, fromEngine: 'tray')`, a
-   direct FFI call into the Rust library.
-2. **Rust** starts a run, adds the prompt and an agent reply to the chat
-   messages, and **pushes the new state to both engines**.
-3. A mock agent thread in Rust advances the run every 450 ms and pushes again
-   each time.
-4. **Engine A** (chat window) shows "You · from tray" and the agent's live
-   reply. **Engine B** (popover) shows the progress ring and the latest reply.
-   Both show the same revision number, because they read the same state.
+```mermaid
+flowchart LR
+    U(["You type in the popover<br/>and press send"]) --> B["Engine B<br/>submitPrompt(text, fromEngine: 'tray')"]
+    B -- "FFI call" --> R["Rust<br/>start a run, add the prompt<br/>and an agent reply to the chat"]
+    R --> P{{"Push the new state<br/>to both engines"}}
+    T["Mock agent thread<br/>a step every 450 ms"] --> R
+    P --> A2["Engine A · chat window<br/>'You · from tray' + live reply"]
+    P --> B2["Engine B · popover<br/>progress ring + latest reply"]
+```
+
+Both windows show the same revision number, because they read the same state.
 
 ### How the popover opens and closes
 
-1. A click on the tray icon (or <kbd>⌥ Space</kbd> on macOS) reaches
-   **engine A**, which owns the tray.
-2. Engine A sets `popoverVisible = true` in Rust, along with the click's
-   position.
-3. **Engine B** sees the change on its stream and asks its runner to place the
-   popover under the icon, show it and give it keyboard focus.
-4. A click outside makes the popover lose focus. Engine B hides it and sets
-   `popoverVisible = false`.
+```mermaid
+flowchart TD
+    C(["Click on the tray icon<br/>or ⌥ Space on macOS"]) --> A["Engine A, which owns the tray"]
+    A --> S["Rust: popoverVisible = true<br/>plus the click's position"]
+    S -- "pushed on engine B's stream" --> B["Engine B"]
+    B --> W["Runner: place the popover under the icon,<br/>show it, give it keyboard focus"]
+    W --> O(["Popover open"])
+    O --> X{"Click outside,<br/>Esc, or the tray icon again"}
+    X -- "focus lost or Esc" --> H["Engine B hides it<br/>Rust: popoverVisible = false"]
+    X -- "tray icon or ⌥ Space" --> T["Engine A<br/>Rust: popoverVisible = false"]
+    T -- "pushed on engine B's stream" --> H2["Engine B hides it"]
+    H --> Z(["Popover closed"])
+    H2 --> Z
+```
 
 Engine B is started **hidden at launch**, so the first click opens the popover
 instantly. That costs memory up front: about 110 MB in a debug build. The chat
