@@ -1,24 +1,19 @@
-import 'dart:async';
-import 'dart:io';
-
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_tray_popover/flutter_tray_popover.dart';
 
-import 'panel_window.dart';
 import 'src/rust/api/agent.dart';
 import 'ui/palette.dart';
 import 'ui/widgets.dart';
 
 const trayEngineName = 'tray';
 
-/// Actions in the popover's overflow menu. On Linux this replaces the tray's
-/// native context menu.
+/// Actions in the popover's overflow menu, in place of a native tray menu.
 enum PopoverMenu { remote, stop, quit }
 
-/// Entry point for the popover engine (engine B). It is started hidden at
-/// launch so the first tray click opens instantly; the runner has already
-/// shaped its window, and showing it is driven by the shared popover state.
+/// Builds the popover engine's app (engine B). The flutter_tray_popover
+/// plugin starts this engine hidden at launch and shows, places and hides
+/// its window natively, so the first tray click opens it instantly.
 Future<Widget> bootTrayPanel() async {
   await attachEngine(name: trayEngineName);
   await recordMemoryMark(label: 'tray engine ready');
@@ -34,48 +29,27 @@ class TrayPanelApp extends StatefulWidget {
 
 class _TrayPanelAppState extends State<TrayPanelApp> {
   final _state = watchState().asBroadcastStream();
-  late final StreamSubscription<AgentSnapshot> _visibility;
-  var _visible = false;
   String? _pluginError;
   var _transparent = false;
 
   @override
   void initState() {
     super.initState();
-    _configureWindow();
-    PanelWindow.onFocusLost(_dismiss);
-    // The shared state decides whether the popover is open, whichever engine
-    // or shortcut changed it.
-    _visibility = _state.listen((s) {
-      if (s.popoverVisible && !_visible) {
-        PanelWindow.focus(anchorX: s.popoverAnchorX).ignore();
-      } else if (!s.popoverVisible && _visible) {
-        PanelWindow.hide().ignore();
-      }
-      _visible = s.popoverVisible;
-    });
-  }
-
-  @override
-  void dispose() {
-    _visibility.cancel();
-    super.dispose();
+    _checkWindow();
   }
 
   // Also how this engine finds out whether the runner registered its plugins.
-  Future<void> _configureWindow() async {
+  Future<void> _checkWindow() async {
     try {
-      final transparent = await PanelWindow.configure();
+      final transparent = await TrayPopover.isTransparent();
       if (mounted) setState(() => _transparent = transparent);
     } on MissingPluginException catch (e) {
-      setState(() => _pluginError = e.toString());
+      if (mounted) setState(() => _pluginError = e.toString());
     }
   }
 
   void _dismiss() {
-    if (!_visible || _pluginError != null) return;
-    PanelWindow.hide();
-    setPopoverVisible(visible: false);
+    if (_pluginError == null) TrayPopover.hide();
   }
 
   // Same process as the main window, so Quit here ends both engines.
@@ -86,15 +60,13 @@ class _TrayPanelAppState extends State<TrayPanelApp> {
       case PopoverMenu.stop:
         stopRun();
       case PopoverMenu.quit:
-        exit(0);
+        TrayPopover.quit();
     }
   }
 
   Future<void> _openMainWindow() async {
-    final windows = await WindowController.getAll();
-    // The main window is the one desktop_multi_window attached without arguments.
-    await windows.firstWhere((w) => w.arguments.isEmpty).show();
-    _dismiss();
+    await TrayPopover.showMainWindow();
+    await TrayPopover.hide();
   }
 
   @override

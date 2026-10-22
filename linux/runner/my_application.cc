@@ -7,9 +7,7 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
-#include "desktop_multi_window/desktop_multi_window_plugin.h"
-#include "linux_tray.h"
-#include "panel_window.h"
+#include "flutter_tray_popover/flutter_tray_popover_plugin.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -23,12 +21,6 @@ static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
-
-  // The app lives in the tray: closing the main window only hides it, and
-  // Quit in the tray menu ends the process. Connected first so it runs before
-  // FlView's own handler, which would quit.
-  g_signal_connect(window, "delete-event", G_CALLBACK(gtk_widget_hide_on_delete),
-                   nullptr);
 
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
@@ -76,28 +68,17 @@ static void my_application_activate(GApplication* application) {
   // realized, and the tray popover (or tray menu) shows the window on demand.
   gtk_widget_realize(GTK_WIDGET(view));
 
-  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
-  linux_tray_register(FL_PLUGIN_REGISTRY(view));
-
-  // Every window from desktop_multi_window runs its own Flutter engine, and a
-  // new engine starts with no plugins. Register them here, or calls from the
-  // tray panel fail with MissingPluginException. AGENT_DEMO_SKIP_PLUGINS=1
-  // leaves them out to show that failure.
-  // Windows added from now on are desktop_multi_window's, i.e. the popover;
-  // they still need their transparent visual before they are realized.
-  g_signal_connect(application, "window-added",
-                   G_CALLBACK(+[](GtkApplication*, GtkWindow* added, gpointer) {
-                     panel_window_prepare_visual(added);
-                   }),
-                   nullptr);
-
+  // The popover runs in a second Flutter engine, created by the
+  // flutter_tray_popover plugin, and a new engine starts with no plugins.
+  // Only the app can register its own, so it does that here for the popover
+  // engine; otherwise the popover's calls fail with MissingPluginException.
+  // AGENT_DEMO_SKIP_PLUGINS=1 leaves them out to show that failure.
   if (g_strcmp0(g_getenv("AGENT_DEMO_SKIP_PLUGINS"), "1") != 0) {
-    desktop_multi_window_plugin_set_window_created_callback(
-        [](FlPluginRegistry* registry) {
-          fl_register_plugins(registry);
-          panel_window_register(registry);
-        });
+    flutter_tray_popover_plugin_set_engine_created_callback(
+        [](FlPluginRegistry* registry) { fl_register_plugins(registry); });
   }
+
+  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

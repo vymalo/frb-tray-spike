@@ -13,6 +13,8 @@ The point of the spike is the architecture behind that:
 > popover and the chat window) that share one state kept in Rust through
 > [flutter_rust_bridge](https://cjycode.com/flutter_rust_bridge/) (FRB).**
 
+The tray, the popover window and the second engine come from a reusable plugin
+in this repo, [`flutter_tray_popover`](packages/flutter_tray_popover).
 [PROOF-ONE-PROCESS.md](PROOF-ONE-PROCESS.md) shows, from the running app and the
 code, that it really is one process with two engines and one Rust state.
 
@@ -24,29 +26,30 @@ code, that it really is one process with two engines and one Rust state.
 flowchart TB
     subgraph PROC["One OS process: agent_tray_demo"]
         direction TB
-        subgraph RUNNER["Native runner: GTK on Linux, AppKit on macOS"]
+        subgraph PLUGIN["flutter_tray_popover plugin (native: GTK on Linux, AppKit on macOS)"]
             TRAY["Tray icon"]
-            WIN["Popover window helper<br/>shape, transparency, placement, focus"]
+            WIN["Popover window<br/>placement, focus, click-outside"]
             KEY["⌥ Space shortcut<br/>(macOS)"]
         end
         subgraph A["Flutter engine A · Dart isolate 1"]
-            A1["Owns the tray, toggles the popover<br/>lib/main_window.dart"]
+            A1["appMain: sets up the plugin<br/>lib/main.dart"]
             A2["Chat window, hidden until opened<br/>lib/main_window.dart"]
         end
         subgraph B["Flutter engine B · Dart isolate 2"]
-            B1["Popover UI, 'Ask anything'<br/>lib/tray_panel.dart"]
+            B1["trayMain: the popover UI<br/>lib/tray_panel.dart"]
         end
         subgraph RUST["Rust library, loaded once: rust/src/api/agent.rs"]
-            STATE[("Shared AgentSnapshot<br/>task, progress, chat,<br/>popover open/closed, engines")]
+            STATE[("Shared AgentSnapshot<br/>task, progress, chat, engines")]
             AGENT["Mock agent thread"]
         end
     end
 
-    TRAY -- "click (platform channel)" --> A1
-    KEY -- "toggle (platform channel)" --> A1
-    A1 -. "creates at launch, hidden<br/>(desktop_multi_window)" .-> B
-    B1 -- "focus / hide (platform channel)" --> WIN
-    WIN -- "focusLost" --> B1
+    A1 -- "TrayPopover.setUp (platform channel)" --> PLUGIN
+    PLUGIN -. "creates at launch, hidden" .-> B
+    TRAY -- "click: toggle" --> WIN
+    KEY -- "toggle" --> WIN
+    WIN -- "shows / hides" --> B
+    B1 -- "hide, showMainWindow, quit" --> PLUGIN
     A -- "FFI calls via FRB" --> STATE
     B -- "FFI calls via FRB" --> STATE
     AGENT -- "updates" --> STATE
@@ -57,23 +60,75 @@ flowchart TB
 Solid arrows are calls, dotted is creation, and thick arrows are state pushed
 from Rust to the engines.
 
+### Where it sits in Flutter's layers
+
+Flutter has three layers: the **framework** (Dart: widgets, your app), the
+**engine** (C++: the Dart VM, rendering, platform channels) and the
+**embedder** (the native host app: here the runner and the plugin's native
+code) ([architectural overview](https://docs.flutter.dev/resources/architectural-overview)).
+This app uses each layer twice, once per engine, and adds the Rust library
+beside them:
+
+```mermaid
+flowchart TB
+    subgraph FW["Framework layer · Dart"]
+        direction LR
+        FA["Engine A's app<br/>chat window, setUp"]
+        FB["Engine B's app<br/>popover, trayMain"]
+    end
+    subgraph EN["Engine layer · C++, one Dart VM, libflutter loaded once"]
+        direction LR
+        EA["Engine instance A<br/>isolate 1, own threads"]
+        EB["Engine instance B<br/>isolate 2, own threads"]
+    end
+    subgraph EM["Embedder layer · native"]
+        direction LR
+        RU["Runner<br/>hosts engine A's window"]
+        PN["Plugin native code<br/>tray, popover window, creates engine B"]
+    end
+    OS["OS: X11 · GNOME tray · AppKit"]
+    RS[("Rust library, loaded once<br/>shared state")]
+
+    FW <-. "platform channels" .-> EN
+    EN <-. "platform channels" .-> EM
+    EM --> OS
+    FW -- "FFI calls" --> RS
+    RS -- "state pushed to<br/>each engine's port" --> FW
+```
+
+- **Platform channels** (dotted) are Flutter's standard path between Dart and
+  native code: `TrayPopover.setUp`, `show`, `visibilityChanged` and so on go
+  from the framework through the engine to the plugin's native code. Channels
+  belong to an engine, so plugins are registered on each engine.
+- **FFI** (solid) bypasses the engine and the embedder: `submitPrompt` and
+  `watchState` call the Rust library directly through `dart:ffi`, and Rust
+  posts changes back to each engine's Dart port (`Dart_PostCObject`). So the
+  shared state needs no per-engine registration, only `RustLib.init()` in each
+  isolate.
+- **What's shared and what isn't:** the Dart VM, `libflutter` and the Rust
+  library exist once per process. The engine instances, their isolates,
+  threads, windows and plugin channels exist twice.
+
 ### The key ideas
 
 - **One app, two engines.** There's one Flutter project, one Dart codebase
   (`lib/`), one build and one executable. A Flutter **engine** is the runtime
-  that runs Dart code and draws a window. At launch, engine A starts and creates
-  engine B, a second engine inside the same process, using the
-  [`desktop_multi_window`](https://pub.dev/packages/desktop_multi_window) plugin.
-  Both engines run the same `main()`, and their startup arguments decide which
-  role each one plays (`lib/main.dart`):
+  that runs Dart code and draws a window. At launch, engine A runs `appMain`,
+  which calls `TrayPopover.setUp(...)`. The plugin then creates the tray icon
+  and engine B, a second engine inside the same process, which runs `trayMain`
+  (`lib/main.dart`):
 
   ```dart
-  if (args.firstOrNull == 'multi_window') {
-    runApp(await bootTrayPanel());   // engine B: the popover
-  } else {
-    runApp(const MainApp());         // engine A: tray + chat window
-  }
+  void main(List<String> args) =>
+      TrayPopover.run(args: args, app: appMain, popover: trayMain);
+
+  @pragma('vm:entry-point')        // keeps trayMain in release builds
+  Future<void> trayMain() async { ... runApp(await bootTrayPanel()); }
   ```
+
+  macOS starts engine B at `trayMain` by name. The Linux embedder can only start
+  an engine at `main`, so there engine B runs `main` with a `tray_popover`
+  argument, and `TrayPopover.run` routes it to `trayMain`.
 
 - **The engines can't share Dart objects.** Each engine runs its own Dart
   **isolate**, with separate memory. So the shared state doesn't live in Dart.
@@ -81,14 +136,15 @@ from Rust to the engines.
 - **The shared state lives in Rust.** The Rust library is loaded **once** per
   process, so both engines call into the same copy, and its `static` state is
   shared (`rust/src/api/agent.rs`). Engines **write** by calling Rust functions
-  such as `submitPrompt` and `setPopoverVisible`, and **read** only from a
-  stream: each engine calls `watchState()`, and every change is pushed to both
-  engines. The engines never talk to each other directly.
+  such as `submitPrompt`, and **read** only from a stream: each engine calls
+  `watchState()`, and every change is pushed to both engines. The engines never
+  talk to each other directly.
 
-- **Native code only where Flutter can't reach.** The tray icon, the popover's
-  window style (borderless, floating, transparent) and the global shortcut are
-  OS features. They live in the native "runner" code (`linux/runner/`,
-  `macos/Runner/`), and Dart talks to it over **platform channels**.
+- **The plugin owns everything native.** The tray icon, the popover window
+  (placement, focus, transparency, click-outside) and the global shortcut are
+  OS features, implemented once in the plugin's native code and shared by both
+  engines. Showing and hiding the popover happens natively, without a round
+  trip through Dart.
 
 ### How a prompt flows
 
@@ -110,17 +166,14 @@ Both windows show the same revision number, because they read the same state.
 
 ```mermaid
 flowchart TD
-    C(["Click on the tray icon<br/>or ⌥ Space on macOS"]) --> A["Engine A, which owns the tray"]
-    A --> S["Rust: popoverVisible = true<br/>plus the click's position"]
-    S -- "pushed on engine B's stream" --> B["Engine B"]
-    B --> W["Runner: place the popover under the icon,<br/>show it, give it keyboard focus"]
-    W --> O(["Popover open"])
-    O --> X{"Click outside,<br/>Esc, or the tray icon again"}
-    X -- "focus lost or Esc" --> H["Engine B hides it<br/>Rust: popoverVisible = false"]
-    X -- "tray icon or ⌥ Space" --> T["Engine A<br/>Rust: popoverVisible = false"]
-    T -- "pushed on engine B's stream" --> H2["Engine B hides it"]
+    C(["Click on the tray icon<br/>or ⌥ Space on macOS"]) --> N["Plugin (native)"]
+    N --> W["Place the popover under the icon,<br/>show it with keyboard focus"]
+    W --> O(["Popover open<br/>engine B renders it"])
+    O --> X{"Click outside, Esc,<br/>or the tray icon again"}
+    X -- "focus lost or tray icon" --> H["Plugin hides it"]
+    X -- "Esc" --> E["Engine B: TrayPopover.hide()"]
+    E --> H
     H --> Z(["Popover closed"])
-    H2 --> Z
 ```
 
 Engine B is started **hidden at launch**, so the first click opens the popover
@@ -135,38 +188,67 @@ window shows the measured cost of the second engine.
 | One process rather than two apps | One build, one install, and the engines can share native state cheaply; no inter-process communication |
 | State in Rust | Isolates can't share Dart memory; native memory, reached over FFI from both engines, can be shared |
 | FRB streams | Every change reaches every engine the same way, so the windows can't disagree |
-| Plugins registered per engine | A new engine starts with no platform-channel plugins; the runner registers them for engine B. FRB needs no registration, because it uses FFI |
+| A plugin for the tray and the popover | The native parts are generic, so another app can reuse them with a `setUp` call, a `trayMain` and one runner line |
+| Plugins registered per engine | A new engine starts with no platform-channel plugins, and only the app can call its own generated registrant, so the runner hands the plugin a callback for engine B. FRB needs no registration, because it uses FFI |
+
+## Using the plugin
+
+```dart
+// engine A, once
+await TrayPopover.setUp(icon: 'assets/tray_icon.png', optionSpaceShortcut: true);
+
+// either engine
+await TrayPopover.show();            // also hide(), toggle(), isVisible()
+await TrayPopover.showMainWindow();
+await TrayPopover.quit();
+TrayPopover.visibilityChanges.listen((visible) { ... });
+```
+
+And one block in each runner, so engine B gets the app's plugins:
+
+```c
+// linux/runner/my_application.cc
+flutter_tray_popover_plugin_set_engine_created_callback(
+    [](FlPluginRegistry* registry) { fl_register_plugins(registry); });
+```
+```swift
+// macos/Runner/MainFlutterWindow.swift
+FlutterTrayPopoverPlugin.onEngineCreated = { RegisterGeneratedPlugins(registry: $0) }
+```
+
+See [packages/flutter_tray_popover/README.md](packages/flutter_tray_popover/README.md)
+for the full API.
 
 ## Platform differences
 
 | | Linux (GNOME, X11 through XWayland) | macOS |
 |---|---|---|
-| Tray icon | Legacy X11 tray icon (`linux/runner/linux_tray.cc`); any click toggles the popover, and its menu (Simulate iPhone, Stop, Quit) is in the popover's `⋯` button | `tray_manager`'s status item: left click toggles the popover, right click opens a native menu |
+| Tray icon | Legacy X11 tray icon; any click toggles the popover, and its menu (Simulate iPhone, Stop, Quit) is in the popover's `⋯` button | Status item; any click toggles the popover |
 | Popover window | Borderless GTK utility window, always on top, skips the taskbar; transparent around the card when a compositor is running | Non-activating `NSPanel` (like Spotlight): takes keyboard focus without bringing the app forward, transparent around the card |
+| How engine B starts | `main` with the `tray_popover` argument (no named entry points on Linux) | `trayMain` by name |
 | Global shortcut | None | <kbd>⌥ Space</kbd> |
-| Main window at launch | Hidden; closing it only hides it | Hidden, no Dock icon (`LSUIElement`); closing it only hides it |
-| Who shows the popover window | Engine A (a hidden GTK Flutter view never renders, so engine B can't show itself the first time) | Engine B, when the shared state says so |
+| Main window at launch | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) | Hidden, no Dock icon (`LSUIElement`); closing it only hides it (`AppDelegate`) |
 
-**Why Linux doesn't use `tray_manager`:** on Linux it creates an AppIndicator,
-and GNOME's tray extension opens an AppIndicator's native menu on a single
-click without telling the app. The plugin's maintainer confirms it: Linux
-"reports no tray icon clicks at all"
-([tray_manager#101](https://github.com/leanflutter/tray_manager/issues/101)).
-The extension does forward every click on a legacy X11 tray icon, so the Linux
-runner uses one. GTK 3 ignores the synthetic events GNOME forwards, so
-`linux_tray.cc` reads them with a GDK event filter. Linux also forces X11
-(XWayland), because Wayland doesn't let an app position its popover under the
-tray.
+**Why the Linux tray isn't an AppIndicator:** GNOME's tray extension opens an
+AppIndicator's native menu on a single click without telling the app. The
+`tray_manager` plugin's maintainer confirms Linux "reports no tray icon clicks
+at all" ([tray_manager#101](https://github.com/leanflutter/tray_manager/issues/101)).
+The extension does forward every click on a legacy X11 tray icon, so the plugin
+uses one. GTK 3 ignores the synthetic events GNOME forwards, so the plugin reads
+them with a GDK event filter. Linux also forces X11 (XWayland, in
+`linux/runner/main.cc`), because Wayland doesn't let an app position its
+popover under the tray.
 
-**Status:** the Linux build is tested end to end. The macOS build compiles in
-CI, but hasn't been run on a Mac yet.
+**Status:** the Linux build is tested end to end. The macOS code hasn't been
+compiled or run since moving into the plugin: CI compiles it on the next push,
+and it still needs a test on a Mac. Windows isn't implemented.
 
 ## Run
 
 Linux (Ubuntu 24.04):
 
 ```bash
-sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libayatana-appindicator3-dev
+sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 flutter run -d linux
 ```
 
@@ -214,7 +296,8 @@ It installs to `~/.local/share/agent_tray_demo`, adds `agent-tray-demo` to
 ```bash
 cargo test --manifest-path rust/Cargo.toml   # Rust: run state machine, chat messages, memory reading
 flutter test                                 # Flutter: popover and chat window views, without Rust
-flutter test integration_test -d linux       # real Rust library: two subscribers see the same run
+(cd packages/flutter_tray_popover && flutter test)   # the plugin's Dart API
+flutter test integration_test/shared_state_test.dart -d linux   # real Rust library: two subscribers
 
 # The whole app with both engines: engine B types a prompt into the real
 # popover, and engine A checks it arrives in the chat through Rust.
@@ -226,23 +309,54 @@ flutter drive -d linux --driver=test_driver/integration_test.dart \
 
 ```
 lib/                                Dart: one codebase for both engines
-  main.dart                         entry point; picks engine A or B from the startup arguments
-  main_window.dart                  engine A: tray, creates engine B, toggles the popover, chat window
+  main.dart                         main → appMain (engine A) or trayMain (engine B)
+  main_window.dart                  engine A: sets up the plugin, chat window
   tray_panel.dart                   engine B: the popover
-  panel_window.dart                 channel to the runner's popover-window helper
-  linux_tray.dart                   channel for Linux tray clicks
-  global_hotkey.dart                channel for ⌥ Space (macOS)
   ui/                               colours and small shared widgets
   src/rust/                         Dart side of the Rust API, generated by FRB (don't edit)
 rust/src/api/agent.rs               the shared state, chat, streams to each engine, mock agent
 rust_builder/                       builds the Rust library as part of `flutter build`
-linux/runner/                       Linux runner (GTK)
-  my_application.cc                 engine A's window; registers plugins on engine B
-  linux_tray.cc                     tray icon and its click forwarding
-  panel_window.cc                   popover window: utility type, transparency, placement, focus
-macos/Runner/MainFlutterWindow.swift  macOS runner: NSPanel popover, ⌥ Space, plugins on engine B
+packages/flutter_tray_popover/      the plugin: tray icon, popover window, engine B, ⌥ Space
+  lib/flutter_tray_popover.dart     Dart API (TrayPopover)
+  linux/flutter_tray_popover_plugin.cc      Linux implementation (GTK, X11)
+  macos/Classes/FlutterTrayPopoverPlugin.swift  macOS implementation (NSStatusItem, NSPanel)
+linux/runner/                       Linux runner: forces X11, registers plugins on engine B
+macos/Runner/                       macOS runner: registers plugins on engine B, menu-bar app settings
 linux/packaging/                    Linux install script, desktop entry, icon
 test/                               widget tests
 integration_test/                   tests that run the real app with the real Rust library
 PROOF-ONE-PROCESS.md                evidence: one process, two engines, one Rust state
 ```
+
+## Related: Flutter's own multi-window support
+
+This spike uses **two engines**, one per window, because Flutter on desktop has
+so far drawn one window per engine. Flutter is adding **multi-window support to
+a single engine**: several native windows in one widget tree, so they can share
+Dart state directly, without a native store like the Rust library here. If that
+becomes stable on Linux and macOS, the popover could be a second window of the
+same engine instead of a second engine. That would mean less memory, and no
+cross-engine state.
+
+Status when this was written (October 2026): **experimental**, on the `main`
+channel only, behind a feature flag. The stable Flutter used here (3.41) has no
+windowing code in its Linux engine.
+
+- [Introducing the Desktop Windowing API for Flutter](https://flutter.dev/blog/desktop-windowing-apis):
+  the official announcement, from August 2026. It's available on the `main`
+  channel with `flutter config --enable-windowing`, "hidden behind an
+  experimental feature flag and are therefore subject to change". All windows
+  share one widget tree, so state is shared between them.
+- [flutter#30701, "Support multiple windows for desktop shells"](https://github.com/flutter/flutter/issues/30701):
+  the long-standing tracking issue, still open.
+- [flutter#142845, "Multi View for Windows/MacOS"](https://github.com/flutter/flutter/issues/142845):
+  the umbrella issue for the multi-view work on Windows and macOS, still open.
+- [flutter#194784](https://github.com/flutter/flutter/issues/194784): a request
+  to let the windowing API own the app's primary window.
+- [Desktop Multi-Window Support (design doc)](https://docs.google.com/document/u/0/d/11_4wntz_9IJTQOo_Qhp7QF4RfpIMTfVygtOTxQ4OGHY/mobilebasic):
+  the public design document.
+- [Canonical: Bringing multiple windows to Flutter desktop apps](https://forum.itsallwidgets.com/t/canonical-bringing-multiple-windows-to-flutter-desktop-apps/2412):
+  background on Canonical's work on the feature.
+- [Multiple Flutter instances](https://docs.flutter.dev/add-to-app/multiple-flutters):
+  the official docs on running several engines in one app, which is the
+  approach this spike takes today.

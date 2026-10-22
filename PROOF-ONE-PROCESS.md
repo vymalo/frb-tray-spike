@@ -7,8 +7,9 @@ they reach through flutter_rust_bridge (FRB).
 
 ```
 one OS process (agent_tray_demo)
-├─ Flutter engine A → Dart isolate 1 → tray icon + chat window
-├─ Flutter engine B → Dart isolate 2 → tray popover
+├─ Flutter engine A → Dart isolate 1 → chat window; sets up the tray
+├─ Flutter engine B → Dart isolate 2 → tray popover, created by the plugin
+├─ libflutter_tray_popover_plugin.so (loaded once) → tray icon, popover window
 └─ librust_lib_agent_tray_demo.so (loaded once) → shared AgentSnapshot
 ```
 
@@ -17,28 +18,29 @@ one OS process (agent_tray_demo)
   - [1.2 Every window belongs to that process](#12-every-window-belongs-to-that-process)
   - [1.3 Two engines: two sets of engine threads](#13-two-engines-two-sets-of-engine-threads)
   - [1.4 Two Dart isolates in one Dart VM](#14-two-dart-isolates-in-one-dart-vm)
-  - [1.5 One copy of the Flutter engine and of the Rust library](#15-one-copy-of-the-flutter-engine-and-of-the-rust-library)
+  - [1.5 One copy of each library](#15-one-copy-of-each-library)
   - [1.6 Both engines see the same state](#16-both-engines-see-the-same-state)
 - [2. The code that makes it possible](#2-the-code-that-makes-it-possible)
 - [3. Reproduce it](#3-reproduce-it)
 
 ## 1. What the running system shows
 
-Sections 1.1, 1.2, 1.3 and 1.5 were captured on 2026-10-20 from the installed
-release build (`linux/packaging/install.sh`) on Ubuntu 24.04 (GNOME, X11
-through XWayland). It was started from the app grid, with no window opened:
-engine B is created hidden at launch, so both engines were already running.
-Section 1.4 needs the Dart VM service, which only debug builds have, so it
-comes from a debug run on 2026-10-19.
+Sections 1.1 to 1.5 were captured on 2026-10-22 from the build that uses the
+[`flutter_tray_popover`](packages/flutter_tray_popover) plugin, on Ubuntu 24.04
+(GNOME, X11 through XWayland). 1.1, 1.2, 1.3 and 1.5 come from the installed
+release build (`linux/packaging/install.sh`), started from the app grid with no
+window opened: the plugin creates engine B hidden at launch, so both engines
+were already running. 1.4 needs the Dart VM service, which only debug builds
+have, so it comes from a debug run of the same code.
 
 ### 1.1 One process, no children
 
 ```
 $ ps -o pid,ppid,nlwp,rss,cmd -C agent_tray_demo
     PID    PPID NLWP   RSS CMD
- 113357    4033   60 189216 /home/christian/.local/share/agent_tray_demo/agent_tray_demo
+ 165725    1168   61 192656 /home/christian/.local/share/agent_tray_demo/agent_tray_demo
 
-$ ps --ppid 113357 -o pid= | wc -l
+$ ps --ppid 165725 -o pid= | wc -l
 0
 ```
 
@@ -50,17 +52,17 @@ line here, or a child.
 
 ```
 $ xprop -id <window> _NET_WM_PID      # for each of the app's X11 windows
-0x1a00030 "Another"                  pid=113357   ← tray icon
-0x1a00035 (has no name)              pid=113357   ← popover, engine B
-0x1a00007 "Another — agent client"   pid=113357   ← chat window, engine A
+0xe00030 "dev.demo.agent_tray_demo"   pid=165725   ← tray icon (plugin)
+0xe00035 _NET_WM_WINDOW_TYPE_UTILITY  pid=165725   ← popover, engine B (plugin)
+0xe00007 "Another — agent client"     pid=165725   ← chat window, engine A
 ```
 
-The tray icon, the popover and the chat window are all owned by PID 113357.
+The tray icon, the popover and the chat window are all owned by PID 165725.
 
 ### 1.3 Two engines: two sets of engine threads
 
 ```
-$ cat /proc/113357/task/*/comm | grep '^io\.flutter' | sort | uniq -c
+$ cat /proc/165725/task/*/comm | grep '^io\.flutter' | sort | uniq -c
       2 io.flutter.io
       2 io.flutter.rast
 ```
@@ -72,39 +74,46 @@ thread to count.
 
 ### 1.4 Two Dart isolates in one Dart VM
 
-From a debug build (PID 24321), asking its Dart VM service:
+From a debug build (PID 166200), asking its Dart VM service:
 
 ```
 $ curl -s $VM_SERVICE/getVM
-vm pid: 24321
-isolate isolates/8125096608763831 main
-isolate isolates/2111368719695815 main
+vm pid: 166200
+isolate isolates/1364051846502787 main
+isolate isolates/8042944666079187 main
 ```
 
-One Dart VM, in the app's own PID, runs two root isolates: one per engine,
-each started from `main`. Isolates don't share memory, which is why the
-engines share state through Rust (section 2.3).
+One Dart VM, in the app's own PID, runs two root isolates: one per engine.
+Both are named `main` because on Linux engine B also starts in `main` (with a
+`tray_popover` argument that routes it to `trayMain`; section 2.2). Isolates
+don't share memory, which is why the engines share state through Rust
+(section 2.3).
 
-### 1.5 One copy of the Flutter engine and of the Rust library
+### 1.5 One copy of each library
 
 ```
-$ for lib in librust_lib_agent_tray_demo libflutter_linux_gtk; do
-    echo "$lib: $(grep $lib /proc/113357/maps | awk '{print $5}' | sort -u | wc -l) inode(s)," \
-         "segments: $(grep $lib /proc/113357/maps | awk '{print $2}' | tr '\n' ' ')"
+$ for lib in librust_lib_agent_tray_demo libflutter_linux_gtk libflutter_tray_popover_plugin; do
+    echo "$lib: $(grep $lib /proc/165725/maps | awk '{print $5}' | sort -u | wc -l) inode(s)," \
+         "segments: $(grep $lib /proc/165725/maps | awk '{print $2}' | tr '\n' ' ')"
   done
 librust_lib_agent_tray_demo: 1 inode(s), segments: r--p r-xp r--p rw-p
 libflutter_linux_gtk: 1 inode(s), segments: r--p r-xp r--p rw-p
+libflutter_tray_popover_plugin: 1 inode(s), segments: r--p r-xp r--p r--p rw-p
 ```
 
-Each library is **one file mapped once**. The four segments are the usual parts
-of a single mapping: read-only, code, read-only data and **writable
-data**. That one writable data segment holds the Rust `static`s both engines
-use.
+Each library is **one file mapped once**. The segments are the usual parts of
+a single mapping: read-only, code, read-only data and **writable data**. The
+Rust library's one writable data segment holds the `static`s both engines use,
+and the plugin's holds its one tray icon and popover, shared by both engines'
+registrations of the plugin.
 
 ### 1.6 Both engines see the same state
 
 The chat window (engine A) and the popover (engine B), captured back to back
-during a simulated iPhone run started from the chat window:
+during a simulated iPhone run started from the chat window. This capture is
+from 2026-10-19, before the tray moved into the plugin; the shared Rust state
+it shows hasn't changed since, and the end-to-end test below passes with the
+plugin build:
 
 | | Engine A: chat window | Engine B: popover |
 |---|---|---|
@@ -123,51 +132,78 @@ with `engines == ['main', 'tray']`.
 
 ### 2.1 Engine B is created inside the running process
 
-`desktop_multi_window` (`linux/multi_window_manager.cc`, version 0.3.1) makes a
-new window by creating a new Flutter view, and with it a new engine, in the
-current process. It doesn't launch a program:
+The [`flutter_tray_popover`](packages/flutter_tray_popover) plugin creates
+engine B by creating a new Flutter view, and with it a new engine, in the
+current process. It doesn't launch a program
+(`packages/flutter_tray_popover/linux/flutter_tray_popover_plugin.cc`):
 
 ```c
-g_autoptr(FlDartProject) project = fl_dart_project_new();            // line 95
-const char* entrypoint_args[] = {"multi_window", window_id.c_str(),  // line 96
-                                 config.arguments.c_str(), nullptr};
-...
-auto fl_view = fl_view_new(project);                                 // line 102: new engine
+void create_popover() {
+  ...
+  g_autoptr(FlDartProject) project = fl_dart_project_new();
+  const char* args[] = {kPopoverArgument, nullptr};          // "tray_popover"
+  fl_dart_project_set_dart_entrypoint_arguments(project,
+                                                const_cast<char**>(args));
+  FlView* view = fl_view_new(project);                       // new engine, same process
+  ...
+  // Plugins first, so they're there before the popover's Dart code runs.
+  if (s.engine_created != nullptr) {
+    s.engine_created(FL_PLUGIN_REGISTRY(view));
+  }
+  ...
+  // Realizing the view (which realizes its still hidden window too) starts
+  // the engine, so the first click opens an already running popover.
+  gtk_widget_realize(GTK_WIDGET(view));
 ```
 
-Its Linux code contains no `fork`, `exec`, `g_spawn` or `posix_spawn`. On
-macOS it does the same with `FlutterViewController(project:)`.
+The plugin contains no `fork`, `exec`, `g_spawn` or `posix_spawn`. On macOS
+it does the same with `FlutterEngine(name:project:)`, `run(withEntrypoint:
+"trayMain")` and `FlutterViewController(engine:)`
+(`macos/Classes/FlutterTrayPopoverPlugin.swift`).
 
-### 2.2 One entrypoint, two roles
+### 2.2 One codebase, two entry points
 
-Both engines run the same Dart `main`, and engine B gets the arguments above
-(`lib/main.dart`):
+Both engines run the same app (`lib/main.dart`). Engine A runs `appMain`;
+engine B runs `trayMain`, which macOS starts by name. The Linux embedder can
+only start an engine at `main`, so there engine B runs `main` with the
+`tray_popover` argument from 2.1, and `TrayPopover.run` routes it:
 
 ```dart
-Future<void> main(List<String> args) async {
+void main(List<String> args) =>
+    TrayPopover.run(args: args, app: appMain, popover: trayMain);
+
+/// Engine A: the chat window, which also sets up the tray and the popover.
+Future<void> appMain() async {
   WidgetsFlutterBinding.ensureInitialized();
   // Each engine has its own Dart isolate and must init the bridge; the Rust
   // library itself is loaded once per process, so its state is shared.
   await RustLib.init();
+  await attachEngine(name: mainEngineName);
+  await recordMemoryMark(label: 'main engine ready');
+  runApp(const MainApp());
+}
 
-  if (args.firstOrNull == 'multi_window') {
-    runApp(await bootTrayPanel());          // engine B: the popover
-  } else {
-    await attachEngine(name: mainEngineName);
-    await recordMemoryMark(label: 'main engine ready');
-    runApp(const MainApp());                // engine A: tray + chat window
-  }
+/// Engine B: the popover. The plugin starts this engine at `trayMain` by
+/// name on macOS, so it must survive tree-shaking in release builds.
+@pragma('vm:entry-point')
+Future<void> trayMain() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await RustLib.init();
+  runApp(await bootTrayPanel());
 }
 ```
 
-Engine A creates engine B, hidden, at launch (`lib/main_window.dart`):
+Engine A asks the plugin for the tray and engine B, at launch
+(`lib/main_window.dart`):
 
 ```dart
-Future<WindowController> _startPopoverEngine() async {
+Future<void> _setUpTray() async {
   await recordMemoryMark(label: _beforeTrayMark);
-  return WindowController.create(
-    const WindowConfiguration(arguments: trayPanelArgument, hiddenAtLaunch: true),
+  await TrayPopover.setUp(
+    icon: 'assets/tray_icon.png',
+    optionSpaceShortcut: true, // macOS
   );
+  ...
 }
 ```
 
@@ -222,16 +258,14 @@ and `tray`, and the two windows couldn't show the same `revision`.
 
 ### 2.4 Why a second engine needs plugin registration but not FRB setup
 
-A new engine starts with no platform-channel plugins, so the runner registers
-them for every engine `desktop_multi_window` creates
+A new engine starts with no platform-channel plugins, and only the app can call
+its own generated registrant. So the app's runner hands the plugin a callback,
+which the plugin calls for engine B right after creating it (2.1)
 (`linux/runner/my_application.cc`):
 
 ```c
-desktop_multi_window_plugin_set_window_created_callback(
-    [](FlPluginRegistry* registry) {   // runs for each new engine, in-process
-      fl_register_plugins(registry);
-      panel_window_register(registry);
-    });
+flutter_tray_popover_plugin_set_engine_created_callback(
+    [](FlPluginRegistry* registry) { fl_register_plugins(registry); });
 ```
 
 FRB needs no such step. It reaches the already-loaded Rust library directly
@@ -257,7 +291,7 @@ done
 for t in /proc/"$P"/task/*; do cat "$t"/comm; done | grep '^io\.flutter' | sort | uniq -c
 
 # 1.5 each library is one file (one inode), mapped once
-for lib in librust_lib_agent_tray_demo libflutter_linux_gtk; do
+for lib in librust_lib_agent_tray_demo libflutter_linux_gtk libflutter_tray_popover_plugin; do
   echo "$lib: $(grep "$lib" /proc/"$P"/maps | awk '{print $5}' | sort -u | wc -l) inode(s)"
 done
 ```

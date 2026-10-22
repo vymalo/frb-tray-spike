@@ -3,8 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  desktop_multi_window
-  tray_manager
+  flutter_tray_popover
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

@@ -19,10 +19,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
-            liblzma-dev libayatana-appindicator3-dev xvfb
+            liblzma-dev xvfb
       - run: cargo test --manifest-path rust/Cargo.toml
       - run: flutter test
-      - run: xvfb-run -a flutter test integration_test -d linux
+      - name: Plugin tests
+        run: flutter test
+        working-directory: packages/flutter_tray_popover
+      - run: xvfb-run -a flutter test integration_test/shared_state_test.dart -d linux
       - name: Two engines end to end
         run: >
           xvfb-run -a flutter drive -d linux
@@ -47,6 +50,9 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: cargo test --manifest-path rust/Cargo.toml
       - run: flutter test
+      - name: Plugin tests
+        run: flutter test
+        working-directory: packages/flutter_tray_popover
       - run: flutter build macos --release
       - name: Zip app
         run: ditto -c -k --keepParent build/macos/Build/Products/Release/agent_tray_demo.app agent_tray_demo-macos.zip

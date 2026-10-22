@@ -2,18 +2,19 @@ import 'package:agent_tray_demo/main_window.dart';
 import 'package:agent_tray_demo/src/rust/api/agent.dart';
 import 'package:agent_tray_demo/src/rust/frb_generated.dart';
 import 'package:agent_tray_demo/tray_panel.dart';
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_tray_popover/flutter_tray_popover.dart';
 import 'package:integration_test/integration_test.dart';
 
 const _prompt = 'refactor payments';
 
 /// Runs the real app with both engines in one process: the test drives the
-/// main window, and the tray engine (started by desktop_multi_window with this
-/// same entrypoint) types a prompt into the real panel and sends it.
+/// main window, and the popover engine (started by the flutter_tray_popover
+/// plugin; on Linux through this same `main`) types a prompt into the real
+/// popover and sends it.
 Future<void> main(List<String> args) async {
-  if (args.firstOrNull == 'multi_window') return _trayEngine();
+  if (TrayPopover.isPopoverEngine(args)) return _trayEngine();
 
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -24,7 +25,8 @@ Future<void> main(List<String> args) async {
 
     // The main window starts hidden (tray-first), and a hidden view never
     // renders, so show it before driving it.
-    await tester.runAsync(() async => (await WindowController.fromCurrentEngine()).show());
+    await tester.runAsync(TrayPopover.showMainWindow);
+    final visibility = TrayPopover.visibilityChanges.asBroadcastStream();
     await tester.pumpWidget(const MainApp());
     await tester.pumpAndSettle();
 
@@ -36,12 +38,13 @@ Future<void> main(List<String> args) async {
     final attached = await until(
         (s) => s.memoryMarks.any((m) => m.label == 'tray engine ready'));
     expect(attached.engines, [mainEngineName, trayEngineName]);
-    expect(attached.popoverVisible, isFalse);
+    expect(await tester.runAsync(TrayPopover.isVisible), isFalse);
     expect(attached.memoryMarks.map((m) => m.label),
         containsAll(['before tray engine', 'tray engine ready']));
 
+    final opened = visibility.firstWhere((visible) => visible);
     await tester.tap(find.byKey(const Key('show-popover')));
-    await until((s) => s.popoverVisible);
+    await tester.runAsync(() => opened.timeout(const Duration(seconds: 30)));
 
     final run = await until((s) => s.driver == trayEngineName);
     expect(run.task, 'refactor-payments');
@@ -67,10 +70,13 @@ Future<void> main(List<String> args) async {
 /// then type and send like a user.
 Future<void> _trayEngine() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Subscribe before attaching: the test opens the popover once this engine
+  // has attached to the shared state.
+  final opened = TrayPopover.visibilityChanges.firstWhere((visible) => visible);
   await RustLib.init();
   runApp(await bootTrayPanel());
 
-  await watchState().firstWhere((s) => s.popoverVisible);
+  await opened;
   final controller = LiveWidgetController(WidgetsBinding.instance);
   final field = find.byType(EditableText);
   // Rendering starts once the window is shown; wait until the panel is laid

@@ -1,24 +1,20 @@
-import 'dart:async';
 import 'dart:io';
 
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
-import 'package:tray_manager/tray_manager.dart';
+import 'package:flutter_tray_popover/flutter_tray_popover.dart';
 
-import 'global_hotkey.dart';
-import 'linux_tray.dart';
 import 'src/rust/api/agent.dart';
 import 'ui/palette.dart';
 import 'ui/widgets.dart';
 
 const mainEngineName = 'main';
-const trayPanelArgument = 'tray_panel';
 
 const _beforeTrayMark = 'before tray engine';
 const _trayReadyMark = 'tray engine ready';
 
-/// Engine A: owns the tray icon and the (initially hidden) chat window, and
-/// starts the popover engine hidden at launch so the first tray click is instant.
+/// Engine A: the (initially hidden) chat window. It asks the
+/// flutter_tray_popover plugin for the tray icon and the popover engine,
+/// which the plugin starts hidden so the first tray click is instant.
 class MainApp extends StatefulWidget {
   const MainApp({super.key});
 
@@ -26,112 +22,25 @@ class MainApp extends StatefulWidget {
   State<MainApp> createState() => _MainAppState();
 }
 
-class _MainAppState extends State<MainApp> with TrayListener {
+class _MainAppState extends State<MainApp> {
   final _state = watchState().asBroadcastStream();
-  late final StreamSubscription<AgentSnapshot> _tracking;
-  late final Future<WindowController> _popover = _startPopoverEngine();
-  AgentSnapshot? _last;
-  DateTime? _popoverHiddenAt;
 
   @override
   void initState() {
     super.initState();
-    _tracking = _state.listen((s) {
-      if (_last?.popoverVisible == true && !s.popoverVisible) {
-        _popoverHiddenAt = DateTime.now();
-      }
-      _last = s;
-    });
-    if (Platform.isLinux) {
-      // Any click toggles the popover; its menu is Flutter, in the popover.
-      LinuxTray.listen(onActivate: (x) => _togglePopover(anchorX: x));
-    } else {
-      trayManager.addListener(this);
-      _setUpTrayManager();
-    }
-    if (Platform.isMacOS) GlobalHotkey.listen(_togglePopover);
-    _popover.then((_) {
-      if (Platform.environment['AGENT_DEMO_OPEN_PANEL'] == '1') _setPopover(true);
-    });
+    _setUpTray();
   }
 
-  @override
-  void dispose() {
-    _tracking.cancel();
-    trayManager.removeListener(this);
-    super.dispose();
-  }
-
-  Future<void> _setUpTrayManager() async {
-    await trayManager.setIcon('assets/tray_icon.png');
-    await trayManager.setToolTip('Another');
-    await trayManager.setContextMenu(Menu(items: [
-      MenuItem(key: 'popover', label: 'Open Another'),
-      MenuItem(key: 'main', label: 'Open main window'),
-      MenuItem.separator(),
-      MenuItem(key: 'remote', label: 'Simulate iPhone session'),
-      MenuItem(key: 'stop', label: 'Stop run'),
-      MenuItem.separator(),
-      MenuItem(key: 'quit', label: 'Quit'),
-    ]));
-  }
-
-  Future<WindowController> _startPopoverEngine() async {
+  Future<void> _setUpTray() async {
     await recordMemoryMark(label: _beforeTrayMark);
-    return WindowController.create(
-      const WindowConfiguration(arguments: trayPanelArgument, hiddenAtLaunch: true),
+    await TrayPopover.setUp(
+      icon: 'assets/tray_icon.png',
+      optionSpaceShortcut: true, // macOS
     );
-  }
-
-  Future<void> _setPopover(bool visible, {int? anchorX}) async {
-    final popover = await _popover;
-    // On macOS the popover is a non-activating NSPanel that engine B shows and
-    // hides itself when the shared state changes; desktop_multi_window's own
-    // window for it stays empty, and showing it would activate the app. On
-    // Linux engine A must show the window: a hidden view never renders, so
-    // engine B can't do it the first time.
-    if (!Platform.isMacOS) {
-      visible ? await popover.show() : await popover.hide();
-    }
-    await setPopoverVisible(visible: visible, anchorX: anchorX);
-  }
-
-  void _togglePopover({int? anchorX}) {
-    // Clicking the tray icon while the popover is open first takes focus away
-    // from it, which already dismissed it; that click must not reopen it.
-    final hiddenAt = _popoverHiddenAt;
-    final justDismissed = hiddenAt != null &&
-        DateTime.now().difference(hiddenAt) < const Duration(milliseconds: 400);
-    _setPopover(!(_last?.popoverVisible ?? false) && !justDismissed, anchorX: anchorX);
-  }
-
-  Future<void> _showMainWindow() async =>
-      (await WindowController.fromCurrentEngine()).show();
-
-  void _onMenu(String key) {
-    switch (key) {
-      case 'popover':
-        _setPopover(true);
-      case 'main':
-        _showMainWindow();
-      case 'remote':
-        startRemoteSession();
-      case 'stop':
-        stopRun();
-      case 'quit':
-        exit(0);
+    if (Platform.environment['AGENT_DEMO_OPEN_PANEL'] == '1') {
+      await TrayPopover.show();
     }
   }
-
-  // macOS status item: left click toggles the popover, right click shows the menu.
-  @override
-  void onTrayIconMouseDown() => _togglePopover();
-
-  @override
-  void onTrayIconRightMouseDown() => trayManager.popUpContextMenu();
-
-  @override
-  void onTrayMenuItemClick(MenuItem item) => _onMenu(item.key!);
 
   @override
   Widget build(BuildContext context) {
@@ -143,7 +52,7 @@ class _MainAppState extends State<MainApp> with TrayListener {
         stream: _state,
         builder: (context, snap) => MainWindowView(
           snapshot: snap.data,
-          onShowPopover: () => _setPopover(true),
+          onShowPopover: TrayPopover.show,
           onRemote: startRemoteSession,
           onStop: stopRun,
           onSubmit: (text) => submitPrompt(text: text, fromEngine: mainEngineName),

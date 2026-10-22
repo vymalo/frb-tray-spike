@@ -22,8 +22,6 @@ AgentSnapshot snapshot({
       engines: const ['main', 'tray'],
       memoryMarks: marks,
       rssKb: 204800,
-      popoverVisible: true,
-      popoverAnchorX: null,
       messages: messages,
       revision: 7,
     );

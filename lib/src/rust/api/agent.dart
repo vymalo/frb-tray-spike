@@ -31,13 +31,6 @@ Future<void> startRemoteSession() =>
 
 Future<void> stopRun() => RustLib.instance.api.crateApiAgentStopRun();
 
-/// Shows or hides the tray popover; `anchor_x` is the tray icon's screen x when the
-/// platform reports it, so the popover can open right under the icon.
-Future<void> setPopoverVisible({required bool visible, int? anchorX}) => RustLib
-    .instance
-    .api
-    .crateApiAgentSetPopoverVisible(visible: visible, anchorX: anchorX);
-
 Future<void> recordMemoryMark({required String label}) =>
     RustLib.instance.api.crateApiAgentRecordMemoryMark(label: label);
 
@@ -56,12 +49,6 @@ class AgentSnapshot {
   final List<String> engines;
   final List<MemoryMark> memoryMarks;
   final int rssKb;
-
-  /// Whether the tray popover (engine B) is on screen; either engine may change it.
-  final bool popoverVisible;
-
-  /// Screen x the popover should center on (the tray icon), if known.
-  final int? popoverAnchorX;
   final List<ChatMessage> messages;
 
   /// Bumped on every broadcast so engines can show they see the same revision.
@@ -78,8 +65,6 @@ class AgentSnapshot {
     required this.engines,
     required this.memoryMarks,
     required this.rssKb,
-    required this.popoverVisible,
-    this.popoverAnchorX,
     required this.messages,
     required this.revision,
   });
@@ -96,8 +81,6 @@ class AgentSnapshot {
       engines.hashCode ^
       memoryMarks.hashCode ^
       rssKb.hashCode ^
-      popoverVisible.hashCode ^
-      popoverAnchorX.hashCode ^
       messages.hashCode ^
       revision.hashCode;
 
@@ -116,8 +99,6 @@ class AgentSnapshot {
           engines == other.engines &&
           memoryMarks == other.memoryMarks &&
           rssKb == other.rssKb &&
-          popoverVisible == other.popoverVisible &&
-          popoverAnchorX == other.popoverAnchorX &&
           messages == other.messages &&
           revision == other.revision;
 }

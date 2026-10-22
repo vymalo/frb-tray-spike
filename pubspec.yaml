@@ -34,8 +34,8 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  desktop_multi_window: ^0.3.1
-  tray_manager: ^0.5.3
+  flutter_tray_popover:
+    path: packages/flutter_tray_popover
   rust_lib_agent_tray_demo:
     path: rust_builder
   flutter_rust_bridge: 2.12.0

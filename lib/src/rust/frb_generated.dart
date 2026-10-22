@@ -66,7 +66,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 656527524;
+  int get rustContentHash => 17253223;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -85,11 +85,6 @@ abstract class RustLibApi extends BaseApi {
   int crateApiAgentProcessRssKb();
 
   Future<void> crateApiAgentRecordMemoryMark({required String label});
-
-  Future<void> crateApiAgentSetPopoverVisible({
-    required bool visible,
-    int? anchorX,
-  });
 
   Future<void> crateApiAgentStartRemoteSession();
 
@@ -217,41 +212,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "record_memory_mark", argNames: ["label"]);
 
   @override
-  Future<void> crateApiAgentSetPopoverVisible({
-    required bool visible,
-    int? anchorX,
-  }) {
-    return handler.executeNormal(
-      NormalTask(
-        callFfi: (port_) {
-          final serializer = SseSerializer(generalizedFrbRustBinding);
-          sse_encode_bool(visible, serializer);
-          sse_encode_opt_box_autoadd_i_32(anchorX, serializer);
-          pdeCallFfi(
-            generalizedFrbRustBinding,
-            serializer,
-            funcId: 5,
-            port: port_,
-          );
-        },
-        codec: SseCodec(
-          decodeSuccessData: sse_decode_unit,
-          decodeErrorData: null,
-        ),
-        constMeta: kCrateApiAgentSetPopoverVisibleConstMeta,
-        argValues: [visible, anchorX],
-        apiImpl: this,
-      ),
-    );
-  }
-
-  TaskConstMeta get kCrateApiAgentSetPopoverVisibleConstMeta =>
-      const TaskConstMeta(
-        debugName: "set_popover_visible",
-        argNames: ["visible", "anchorX"],
-      );
-
-  @override
   Future<void> crateApiAgentStartRemoteSession() {
     return handler.executeNormal(
       NormalTask(
@@ -260,7 +220,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 6,
+            funcId: 5,
             port: port_,
           );
         },
@@ -287,7 +247,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 7,
+            funcId: 6,
             port: port_,
           );
         },
@@ -319,7 +279,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           pdeCallFfi(
             generalizedFrbRustBinding,
             serializer,
-            funcId: 8,
+            funcId: 7,
             port: port_,
           );
         },
@@ -351,7 +311,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
             pdeCallFfi(
               generalizedFrbRustBinding,
               serializer,
-              funcId: 9,
+              funcId: 8,
               port: port_,
             );
           },
@@ -395,8 +355,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   AgentSnapshot dco_decode_agent_snapshot(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 14)
-      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
+    if (arr.length != 12)
+      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
     return AgentSnapshot(
       task: dco_decode_String(arr[0]),
       done: dco_decode_u_32(arr[1]),
@@ -408,10 +368,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       engines: dco_decode_list_String(arr[7]),
       memoryMarks: dco_decode_list_memory_mark(arr[8]),
       rssKb: dco_decode_u_32(arr[9]),
-      popoverVisible: dco_decode_bool(arr[10]),
-      popoverAnchorX: dco_decode_opt_box_autoadd_i_32(arr[11]),
-      messages: dco_decode_list_chat_message(arr[12]),
-      revision: dco_decode_u_32(arr[13]),
+      messages: dco_decode_list_chat_message(arr[10]),
+      revision: dco_decode_u_32(arr[11]),
     );
   }
 
@@ -419,12 +377,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
-  }
-
-  @protected
-  int dco_decode_box_autoadd_i_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as int;
   }
 
   @protected
@@ -439,12 +391,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       author: dco_decode_String(arr[2]),
       text: dco_decode_String(arr[3]),
     );
-  }
-
-  @protected
-  int dco_decode_i_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as int;
   }
 
   @protected
@@ -481,12 +427,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       label: dco_decode_String(arr[0]),
       rssKb: dco_decode_u_32(arr[1]),
     );
-  }
-
-  @protected
-  int? dco_decode_opt_box_autoadd_i_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_i_32(raw);
   }
 
   @protected
@@ -542,8 +482,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_engines = sse_decode_list_String(deserializer);
     var var_memoryMarks = sse_decode_list_memory_mark(deserializer);
     var var_rssKb = sse_decode_u_32(deserializer);
-    var var_popoverVisible = sse_decode_bool(deserializer);
-    var var_popoverAnchorX = sse_decode_opt_box_autoadd_i_32(deserializer);
     var var_messages = sse_decode_list_chat_message(deserializer);
     var var_revision = sse_decode_u_32(deserializer);
     return AgentSnapshot(
@@ -557,8 +495,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       engines: var_engines,
       memoryMarks: var_memoryMarks,
       rssKb: var_rssKb,
-      popoverVisible: var_popoverVisible,
-      popoverAnchorX: var_popoverAnchorX,
       messages: var_messages,
       revision: var_revision,
     );
@@ -568,12 +504,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
-  }
-
-  @protected
-  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_i_32(deserializer));
   }
 
   @protected
@@ -589,12 +519,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       author: var_author,
       text: var_text,
     );
-  }
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -649,17 +573,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_i_32(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
   int sse_decode_u_32(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint32();
@@ -674,6 +587,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_decode_unit(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
   }
 
   @protected
@@ -721,8 +640,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_String(self.engines, serializer);
     sse_encode_list_memory_mark(self.memoryMarks, serializer);
     sse_encode_u_32(self.rssKb, serializer);
-    sse_encode_bool(self.popoverVisible, serializer);
-    sse_encode_opt_box_autoadd_i_32(self.popoverAnchorX, serializer);
     sse_encode_list_chat_message(self.messages, serializer);
     sse_encode_u_32(self.revision, serializer);
   }
@@ -734,24 +651,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self, serializer);
-  }
-
-  @protected
   void sse_encode_chat_message(ChatMessage self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_u_32(self.id, serializer);
     sse_encode_bool(self.fromUser, serializer);
     sse_encode_String(self.author, serializer);
     sse_encode_String(self.text, serializer);
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
   }
 
   @protected
@@ -805,16 +710,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_i_32(self, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_u_32(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint32(self);
@@ -829,5 +724,11 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
   }
 }

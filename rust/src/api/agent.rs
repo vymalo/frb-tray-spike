@@ -46,10 +46,6 @@ pub struct AgentSnapshot {
     pub engines: Vec<String>,
     pub memory_marks: Vec<MemoryMark>,
     pub rss_kb: u32,
-    /// Whether the tray popover (engine B) is on screen; either engine may change it.
-    pub popover_visible: bool,
-    /// Screen x the popover should center on (the tray icon), if known.
-    pub popover_anchor_x: Option<i32>,
     pub messages: Vec<ChatMessage>,
     /// Bumped on every broadcast so engines can show they see the same revision.
     pub revision: u32,
@@ -80,8 +76,6 @@ impl Core {
                 engines: Vec::new(),
                 memory_marks: Vec::new(),
                 rss_kb: 0,
-                popover_visible: false,
-                popover_anchor_x: None,
                 messages: Vec::new(),
                 revision: 0,
             },
@@ -240,19 +234,6 @@ pub fn start_remote_session() {
 
 pub fn stop_run() {
     core().stop();
-    broadcast();
-}
-
-/// Shows or hides the tray popover; `anchor_x` is the tray icon's screen x when the
-/// platform reports it, so the popover can open right under the icon.
-pub fn set_popover_visible(visible: bool, anchor_x: Option<i32>) {
-    {
-        let mut core = core();
-        core.snap.popover_visible = visible;
-        if visible {
-            core.snap.popover_anchor_x = anchor_x;
-        }
-    }
     broadcast();
 }
 
