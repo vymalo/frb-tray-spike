@@ -26,7 +26,7 @@ code, that it really is one process with two engines and one Rust state.
 flowchart TB
     subgraph PROC["One OS process: agent_tray_demo"]
         direction TB
-        subgraph PLUGIN["flutter_tray_popover plugin (native: GTK on Linux, AppKit on macOS)"]
+        subgraph PLUGIN["flutter_tray_popover plugin (native: GTK on Linux, AppKit on macOS, Win32 on Windows)"]
             TRAY["Tray icon"]
             WIN["Popover window<br/>placement, focus, click-outside"]
             KEY["⌥ Space shortcut<br/>(macOS)"]
@@ -102,7 +102,7 @@ beside them:
   Future<void> trayMain() async { ... runApp(await bootTrayPanel()); }
   ```
 
-  macOS starts engine B at `trayMain` by name. The Linux embedder can only start
+  macOS and Windows start engine B at `trayMain` by name. The Linux embedder can only start
   an engine at `main`, so there engine B runs `main` with a `tray_popover`
   argument, and `TrayPopover.run` routes it to `trayMain`.
 
@@ -191,19 +191,24 @@ flutter_tray_popover_plugin_set_engine_created_callback(
 // macos/Runner/MainFlutterWindow.swift
 FlutterTrayPopoverPlugin.onEngineCreated = { RegisterGeneratedPlugins(registry: $0) }
 ```
+```cpp
+// windows/runner/flutter_window.cpp
+FlutterTrayPopoverPluginSetEngineCreatedCallback(
+    [](flutter::PluginRegistry* registry) { RegisterPlugins(registry); });
+```
 
 See [packages/flutter_tray_popover/README.md](packages/flutter_tray_popover/README.md)
 for the full API.
 
 ## Platform differences
 
-| | Linux (GNOME, X11 through XWayland) | macOS |
-|---|---|---|
-| Tray icon | Legacy X11 tray icon; any click toggles the popover, and its menu (Simulate iPhone, Stop, Quit) is in the popover's `⋯` button | Status item; any click toggles the popover |
-| Popover window | Borderless GTK utility window, always on top, skips the taskbar; transparent around the card when a compositor is running | Non-activating `NSPanel` (like Spotlight): takes keyboard focus without bringing the app forward, transparent around the card |
-| How engine B starts | `main` with the `tray_popover` argument (no named entry points on Linux) | `trayMain` by name |
-| Global shortcut | None | <kbd>⌥ Space</kbd> |
-| Main window at launch | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) | Hidden, no Dock icon (`LSUIElement`); closing it only hides it (`AppDelegate`) |
+| | Linux (GNOME, X11 through XWayland) | macOS | Windows |
+|---|---|---|---|
+| Tray icon | Legacy X11 tray icon; any click toggles the popover, and its menu (Simulate iPhone, Stop, Quit) is in the popover's `⋯` button | Status item; any click toggles the popover | Notification-area icon; a left or right click toggles the popover |
+| Popover window | Borderless GTK utility window, always on top, skips the taskbar; transparent around the card when a compositor is running | Non-activating `NSPanel` (like Spotlight): takes keyboard focus without bringing the app forward, transparent around the card | Borderless tool window, always on top, no taskbar button, rounded corners on Windows 11; opaque, so the card fills it edge to edge |
+| How engine B starts | `main` with the `tray_popover` argument (no named entry points on Linux) | `trayMain` by name | `trayMain` by name |
+| Global shortcut | None | <kbd>⌥ Space</kbd> | None (<kbd>Alt Space</kbd> is the system window menu) |
+| Main window at launch | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) | Hidden, no Dock icon (`LSUIElement`); closing it only hides it (`AppDelegate`) | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) |
 
 **Why the Linux tray isn't an AppIndicator:** GNOME's tray extension opens an
 AppIndicator's native menu on a single click without telling the app. The
@@ -215,54 +220,103 @@ them with a GDK event filter. Linux also forces X11 (XWayland, in
 `linux/runner/main.cc`), because Wayland doesn't let an app position its
 popover under the tray.
 
-**Status:** the Linux build is tested end to end. The macOS code compiles and
-passes CI ([run 39826822302](https://github.com/vymalo/frb-tray-spike/actions/runs/39826822302)),
-but hasn't been run on a Mac yet. Windows isn't implemented.
+**Status:** the Linux build is tested end to end. macOS has had its first run
+on a real Mac: at launch nothing appeared, because the main engine only starts
+when its window is shown and that window is hidden. The runner now starts it
+explicitly (commit `5ee5379`, release `build-10`). The rest of the Mac
+checklist below is still to be confirmed. The Windows code is new: CI builds
+it, but it hasn't been run on a Windows machine yet.
 
 ## Run
 
-### Download a build (no tools needed)
+### Download and run a build (no tools needed)
 
 Every successful build of `main` is published as a public
 [GitHub release](https://github.com/vymalo/frb-tray-spike/releases), named
-`build-<number>`. The newest one is always at these links:
+`build-<number>`. One command downloads the newest build, unpacks it,
+installs it for your user and starts it:
 
-- **macOS**, universal (Apple silicon and Intel), macOS 12 or later:
-  [agent_tray_demo-macos.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip)
-- **Linux** x64: [agent_tray_demo-linux-x64.tar.gz](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz)
-
-**On a Mac:** the app isn't signed or notarized, so macOS blocks it the first
-time. Unzip it, then clear the quarantine flag, or right-click the app and
-choose **Open**:
+**macOS** (universal: Apple silicon and Intel, macOS 12 or later). Installs to
+`~/Applications/agent_tray_demo.app`:
 
 ```bash
-unzip agent_tray_demo-macos.zip
-```
-```bash
-xattr -dr com.apple.quarantine agent_tray_demo.app
-```
-```bash
-open agent_tray_demo.app
+curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-macos.sh | bash
 ```
 
-Logs (including the plugin's `NSLog` lines) appear if you start it from a
-terminal instead:
+**Linux** (x64, GTK 3, X11 or XWayland; Ubuntu 22.04 or newer). Installs to
+`~/.local/opt/frb-tray-spike/bundle`:
 
 ```bash
-./agent_tray_demo.app/Contents/MacOS/agent_tray_demo
+curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-linux.sh | bash
 ```
 
-**On Linux:** extract it and run `bundle/agent_tray_demo`. It needs GTK 3 and
-X11 or XWayland.
+**Windows** (x64, Windows 10 or 11), in PowerShell. Installs to
+`%LOCALAPPDATA%\frb-tray-spike\agent_tray_demo`:
+
+```powershell
+irm https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-windows.ps1 | iex
+```
+
+From a clone, the same scripts take options: a specific build, another
+folder, or running in the terminal with the app's logs (Ctrl-C quits):
+
+```bash
+scripts/run-macos.sh --build 12 --dir ~/Desktop --logs
+```
+```bash
+scripts/run-linux.sh --build 12 --dir ~/apps --logs
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-windows.ps1 -Build 12 -Dir C:\apps -Logs
+```
+
+Each script stops a copy that's already running, replaces the previous
+install, and prints where the tray icon is. If the app exits straight away,
+the Linux script prints its output.
+
+**Or download the files yourself.** The newest build is always at these links:
+
+- **macOS:** [agent_tray_demo-macos.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip).
+  The app isn't signed or notarized, so macOS blocks it the first time. Unzip
+  it, then clear the quarantine flag (`xattr -dr com.apple.quarantine
+  agent_tray_demo.app`), or right-click the app and choose **Open**. Start it
+  from a terminal (`./agent_tray_demo.app/Contents/MacOS/agent_tray_demo`) to
+  see its logs, including the plugin's `NSLog` lines.
+- **Linux:** [agent_tray_demo-linux-x64.tar.gz](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz).
+  Extract it and run `bundle/agent_tray_demo`.
+- **Windows:** [agent_tray_demo-windows-x64.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-windows-x64.zip).
+  Unzip it and run `agent_tray_demo\agent_tray_demo.exe`. It isn't signed, so
+  SmartScreen may stop it: choose **More info**, then **Run anyway**. The zip
+  includes the Visual C++ runtime. The tray icon may first appear in the
+  overflow behind the taskbar's **^** arrow. A Windows build that fails in CI
+  doesn't block the release, so this file is missing from releases whose
+  Windows build failed.
 
 ### Build from source
 
-**Linux** (Ubuntu 24.04):
+**Linux** (Ubuntu 22.04 or newer):
 
 ```bash
 sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 flutter run -d linux
 ```
+
+**Windows** (Flutter can't build a Windows app on another OS, so this needs
+Windows):
+
+1. Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) (not
+   VS Code) with the **Desktop development with C++** workload.
+2. Install [Flutter](https://docs.flutter.dev/get-started/install/windows)
+   (stable channel) and [Rust](https://rustup.rs) (the default MSVC toolchain).
+3. Run it from the repository's root:
+   ```powershell
+   flutter run -d windows
+   ```
+   Or build the release app, as CI does:
+   ```powershell
+   flutter build windows --release
+   ```
+   The app is then in `build\windows\x64\runner\Release`.
 
 **macOS** (Flutter can't build a macOS app on Linux, so this needs a Mac):
 
@@ -291,8 +345,8 @@ The FRB bindings are already generated and committed, so you don't need
 
 ### What to check on a Mac
 
-The macOS code compiles in CI but hasn't been run on a Mac yet, so these are
-the first things to check:
+The first run on a Mac found that the tray icon never appeared (fixed in
+`build-10`). These are the things to confirm on that build or later:
 
 1. After launch, there's **no Dock icon and no window**, only the icon in the
    menu bar.
@@ -308,14 +362,30 @@ the first things to check:
    open-in-window button shows the chat window with the same conversation.
 7. **Quit** in the popover's `⋯` menu ends the app.
 
-`.github/workflows/build.yml` builds and tests both platforms on every push,
-uploads the bundles as workflow artifacts, and publishes the release above
-for every successful build of `main`.
+### What to check on Windows
+
+The Windows code is built by CI but hasn't been run on Windows yet:
+
+1. After launch there's **no window**, only the tray icon (maybe behind the
+   taskbar's **^** arrow; drag it onto the taskbar to keep it visible).
+2. **Clicking the tray icon** (left or right) opens the popover just above it,
+   or beside it with the taskbar on another edge, and clicking it again
+   closes it.
+3. You can **type in "Ask anything" straight away**.
+4. **Clicking anywhere else** closes the popover.
+5. Sending a prompt shows its progress in the popover; the popover's
+   open-in-window button shows the chat window with the same conversation,
+   and closing that window only hides it.
+6. **Quit** in the popover's `⋯` menu ends the app and removes the tray icon.
+
+`.github/workflows/build.yml` builds and tests all three platforms on every
+push, uploads the bundles as workflow artifacts, and publishes the release
+above for every build of `main` where Linux and macOS pass.
 
 ### Try it
 
 - Launch it: only the tray icon appears.
-- Click the tray icon to toggle the popover under it. On macOS, <kbd>⌥ Space</kbd>
+- Click the tray icon to toggle the popover next to it. On macOS, <kbd>⌥ Space</kbd>
   toggles it from any app.
 - Type an instruction in "Ask anything" and send it. The popover shows the
   progress, and the chat window gets the prompt and the agent's live reply.
@@ -370,9 +440,12 @@ packages/flutter_tray_popover/      the plugin: tray icon, popover window, engin
   lib/flutter_tray_popover.dart     Dart API (TrayPopover)
   linux/flutter_tray_popover_plugin.cc      Linux implementation (GTK, X11)
   macos/Classes/FlutterTrayPopoverPlugin.swift  macOS implementation (NSStatusItem, NSPanel)
+  windows/flutter_tray_popover_plugin.cpp   Windows implementation (Shell_NotifyIcon, Win32 window)
 linux/runner/                       Linux runner: forces X11, registers plugins on engine B
 macos/Runner/                       macOS runner: registers plugins on engine B, menu-bar app settings
+windows/runner/                     Windows runner: registers plugins on engine B, starts hidden
 linux/packaging/                    Linux install script, desktop entry, icon
+scripts/                            download, install and run a CI build: run-macos.sh, run-linux.sh, run-windows.ps1
 test/                               widget tests
 integration_test/                   tests that run the real app with the real Rust library
 PROOF-ONE-PROCESS.md                evidence: one process, two engines, one Rust state

@@ -295,7 +295,39 @@ fn platform_rss_kb() -> Option<u32> {
     (kr == libc::KERN_SUCCESS).then(|| (info.resident_size / 1024) as u32)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+// The working set: the process's pages currently in physical memory.
+#[cfg(windows)]
+fn platform_rss_kb() -> Option<u32> {
+    #[repr(C)]
+    struct ProcessMemoryCounters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn K32GetProcessMemoryInfo(
+            process: *mut std::ffi::c_void,
+            counters: *mut ProcessMemoryCounters,
+            size: u32,
+        ) -> i32;
+    }
+    let size = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+    let mut counters: ProcessMemoryCounters = unsafe { std::mem::zeroed() };
+    counters.cb = size;
+    let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, size) };
+    (ok != 0).then_some((counters.working_set_size / 1024) as u32)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn platform_rss_kb() -> Option<u32> {
     None
 }
@@ -380,7 +412,7 @@ mod tests {
 
     #[test]
     fn rss_is_readable_on_supported_platforms() {
-        if cfg!(any(target_os = "linux", target_os = "macos")) {
+        if cfg!(any(target_os = "linux", target_os = "macos", windows)) {
             assert!(process_rss_kb() > 0);
         }
     }

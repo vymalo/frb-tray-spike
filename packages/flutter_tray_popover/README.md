@@ -7,11 +7,11 @@ instantly.
 
 | | Linux (GNOME, X11 through XWayland) | macOS | Windows |
 |---|---|---|---|
-| Tray icon | Legacy X11 tray icon | `NSStatusItem` | Not implemented |
-| Popover window | Borderless utility window, always on top, transparent with a compositor | Non-activating `NSPanel`, transparent | — |
-| Popover engine starts at | `main(['tray_popover'])` | `trayMain` by name | — |
+| Tray icon | Legacy X11 tray icon | `NSStatusItem` | Notification-area icon (`Shell_NotifyIcon`) |
+| Popover window | Borderless utility window, always on top, transparent with a compositor | Non-activating `NSPanel`, transparent | Borderless tool window, always on top, rounded on Windows 11, opaque |
+| Popover engine starts at | `main(['tray_popover'])` | `trayMain` by name | `trayMain` by name |
 | Global shortcut | — | <kbd>⌥ Space</kbd> | — |
-| Status | Tested | Compiles in CI, not yet run on a Mac | — |
+| Status | Tested | First run on a Mac; full check pending | Builds in CI, not yet run on Windows |
 
 ## Usage
 
@@ -35,7 +35,7 @@ void trayMain() => runApp(const PopoverApp());
 final transparent = await TrayPopover.setUp(
   icon: 'assets/tray_icon.png',   // an asset declared in pubspec.yaml
   size: const Size(440, 330),
-  optionSpaceShortcut: true,      // macOS
+  optionSpaceShortcut: true,      // macOS only
 );
 ```
 
@@ -54,6 +54,13 @@ flutter_tray_popover_plugin_set_engine_created_callback(
 import flutter_tray_popover
 ...
 FlutterTrayPopoverPlugin.onEngineCreated = { RegisterGeneratedPlugins(registry: $0) }
+```
+```cpp
+// windows/runner/flutter_window.cpp, before RegisterPlugins(flutter_controller_->engine())
+#include <flutter_tray_popover/flutter_tray_popover_windows.h>
+...
+FlutterTrayPopoverPluginSetEngineCreatedCallback(
+    [](flutter::PluginRegistry* registry) { RegisterPlugins(registry); });
 ```
 
 **4. Use it from either engine:**
@@ -101,3 +108,18 @@ with one `StreamSink` per engine, as the app in this repo does.
   `AppDelegate`. For a menu-bar-only app, set `LSUIElement` in `Info.plist`.
   The ⌥ Space shortcut uses Carbon's `RegisterEventHotKey`, which needs no
   Accessibility permission.
+- **Windows:** Windows 10 or later.
+  - **Popover:** a top-level tool window hosting engine B's Flutter view as a
+    child window. Windows can't make that view see-through, so `setUp` returns
+    `false` (opaque) and the popover should draw edge to edge; Windows 11
+    rounds the window's corners.
+  - **Placement:** next to the icon, on whichever edge the taskbar is, inside
+    the monitor's work area and scaled for its DPI.
+  - **Tray icon:** a `.ico` or `.png` asset works. Without one, it uses the
+    app's own icon (the runner's resource 101).
+  - **Main window:** don't show it when the first frame is ready (remove
+    `SetNextFrameCallback` from the runner's `flutter_window.cpp`), so the app
+    starts in the tray. With `keepAliveOnWindowClose`, closing it only hides
+    it, and `quit` destroys it, which ends the runner's message loop.
+  - **Shortcut:** `optionSpaceShortcut` is ignored, because <kbd>Alt Space</kbd>
+    opens every window's system menu on Windows.

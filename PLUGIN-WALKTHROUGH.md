@@ -311,7 +311,8 @@ Future<void> appMain() async { ... runApp(const MainApp()); }
 Future<void> trayMain() async { ... runApp(await bootTrayPanel()); }
 ```
 
-- **macOS:** the plugin starts engine B at `trayMain` by name, which is why it
+- **macOS and Windows:** the plugin starts engine B at `trayMain` by name
+  (`run(withEntrypoint:)` on macOS, `dart_entrypoint` on Windows), which is why it
   needs `@pragma('vm:entry-point')`. Without it, release builds would drop the
   function, since nothing in Dart calls it.
 - **Linux:** the embedder has no API to start an engine at a named function
@@ -374,6 +375,11 @@ flutter_tray_popover_plugin_set_engine_created_callback(
 // after (macos/Runner/MainFlutterWindow.swift)
 FlutterTrayPopoverPlugin.onEngineCreated = { RegisterGeneratedPlugins(registry: $0) }
 ```
+```cpp
+// added later (windows/runner/flutter_window.cpp)
+FlutterTrayPopoverPluginSetEngineCreatedCallback(
+    [](flutter::PluginRegistry* registry) { RegisterPlugins(registry); });
+```
 
 The plugin calls it **before** engine B's Dart code starts, so engine B never
 sees a missing plugin. Without the callback, the plugin logs a warning, and the
@@ -386,6 +392,7 @@ demonstrates this).
 |---|---|---|
 | Linux | The runner connected `delete-event` → hide | The plugin does it during `setUp` (`keepAliveOnWindowClose`, default on): it removes FlView's own close handler, which would ask the app to exit, and connects hide-on-close |
 | macOS | `AppDelegate`: don't terminate after the last window closes | Unchanged; a plugin can't override the app delegate |
+| Windows (added later) | — | The plugin subclasses the main window during `setUp` and turns `WM_CLOSE` into hide |
 
 ## 4. The plugin
 
@@ -395,6 +402,8 @@ packages/flutter_tray_popover/
   linux/flutter_tray_popover_plugin.cc           GTK/X11 implementation
   linux/include/.../flutter_tray_popover_plugin.h  C API for the runner callback
   macos/Classes/FlutterTrayPopoverPlugin.swift   AppKit implementation
+  windows/flutter_tray_popover_plugin.cpp        Win32 implementation (added later)
+  windows/include/.../flutter_tray_popover_windows.h  C++ API for the runner callback
   test/flutter_tray_popover_test.dart            Dart API tests
   README.md                                      usage and platform notes
 ```
@@ -512,14 +521,45 @@ On the real app, with clicks sent the way GNOME forwards them:
 
 ## 8. Open points
 
-- **macOS compiles but hasn't been run.** After the commit, CI built the
-  plugin's Swift and the macOS app successfully
+- **macOS: first run done, full check pending.** CI built the plugin's Swift
+  and the macOS app
   ([run 39826822302](https://github.com/vymalo/frb-tray-spike/actions/runs/39826822302)).
-  It still needs a run on a Mac: status item, `run(withEntrypoint: "trayMain")`,
-  the panel, ⌥ Space.
+  The first run on a Mac showed nothing at launch: `FlutterViewController`
+  only starts its engine when its window first appears, and the main window
+  is hidden, so engine A never ran `setUp`. The runner now runs the engine in
+  `awakeFromNib` (`5ee5379`). Still to confirm: the status item,
+  `run(withEntrypoint: "trayMain")`, the panel, ⌥ Space.
 - **Not exercised:** `TrayPopover.quit()`.
-- **Windows** isn't implemented.
+- **Windows builds in CI but hasn't been run** (section 9).
 - **The plugin's `LICENSE`** is still the template's "TODO: Add your license
   here".
-- **The local walkthrough** (`docs/WALKTHROUGH.md`, not in git) still describes
-  the setup before the plugin.
+
+## 9. Windows (added later)
+
+The same Dart API and the same one-state design, in
+`windows/flutter_tray_popover_plugin.cpp`. The app got a Windows runner
+(`flutter create --platforms=windows`) with two changes: it registers the
+callback above, and it no longer shows the main window on the first frame, so
+the app starts in the tray.
+
+| Piece | How it's done |
+|---|---|
+| Engine B | `FlutterDesktopEngineCreate` with `dart_entrypoint = "trayMain"`, the callback to register plugins, then `FlutterDesktopViewControllerCreate`, which starts it |
+| Popover window | A borderless `WS_POPUP` tool window, top-most, no taskbar button, created hidden. Engine B's view is its child window, resized with it. Windows 11 rounds it (`DWMWA_WINDOW_CORNER_PREFERENCE`) |
+| Transparency | Not available for a child Flutter view, so `setUp` returns `transparent: false` and the popover draws edge to edge |
+| Tray icon | `Shell_NotifyIconW` with `NOTIFYICON_VERSION_4`; its messages go to the popover window. Left click, keyboard select and right click all toggle |
+| Placement | `Shell_NotifyIconGetRect` gives the icon; the popover goes above, below or beside it depending on the taskbar's edge, clamped to the monitor's work area, sized for its DPI |
+| Click outside | `WM_ACTIVATE` with `WA_INACTIVE` hides it; the same 400 ms guard stops the closing click on the icon from reopening it, and repeated tray events within 250 ms count once |
+| Focus | Windows lets the app take the foreground when the user clicks its tray icon, so `SetForegroundWindow` then `SetFocus` on the view |
+| Main window | `GetAncestor(view, GA_ROOT)` of the engine that called `setUp`. `keepAliveOnWindowClose` replaces its window procedure (`SetWindowLongPtrW`) with one that hides it on `WM_CLOSE` and passes everything else on; `quit` removes the icon and destroys it, which ends the message loop |
+| Shortcut | None: <kbd>Alt Space</kbd> is the system window menu on Windows |
+
+Engine B needs no message pumping of its own: Flutter's Windows engines post
+their tasks as window messages, so the runner's one message loop serves both.
+
+The Rust library reports memory on Windows too: the process's working set,
+from `K32GetProcessMemoryInfo`.
+
+There's no Windows machine or SDK on the Linux box this was written on, so the
+first compile was CI's `windows` job. The things to check on a real machine
+are listed in the README's "What to check on Windows".

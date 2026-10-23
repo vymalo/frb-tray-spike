@@ -7,7 +7,9 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    # The oldest supported Ubuntu LTS, so the bundle runs there and on anything
+    # newer: a bundle built on 24.04 needs GLib 2.80 and won't start on 22.04.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -64,15 +66,51 @@ jobs:
           name: agent_tray_demo-macos
           path: agent_tray_demo-macos.zip
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path rust/Cargo.toml
+      - run: flutter test
+      - name: Plugin tests
+        run: flutter test
+        working-directory: packages/flutter_tray_popover
+      - run: flutter build windows --release
+      # The zip holds one agent_tray_demo folder: the .exe with its DLLs and data,
+      # plus the Visual C++ runtime, so it runs without installing the
+      # redistributable first.
+      - name: Zip app
+        shell: pwsh
+        run: |
+          Copy-Item -Recurse build\windows\x64\runner\Release agent_tray_demo
+          foreach ($dll in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll') {
+            Copy-Item "$env:WINDIR\System32\$dll" agent_tray_demo
+          }
+          Compress-Archive -Path agent_tray_demo -DestinationPath agent_tray_demo-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent_tray_demo-windows
+          path: agent_tray_demo-windows-x64.zip
+
   # Every successful build of main becomes a public GitHub release, downloadable
-  # without a GitHub account: build-<run number>, with the macOS app and the
-  # Linux bundle attached. The newest is also the repository's "latest"
-  # release, so these links always point at the last good build:
+  # without a GitHub account: build-<run number>, with the macOS app, the Linux
+  # bundle and the Windows app attached. The newest is also the repository's
+  # "latest" release, so these links always point at the last good build:
   #   https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip
   #   https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz
+  #   https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-windows-x64.zip
+  # macOS and Linux must pass. Windows is newer and not yet tested on a real
+  # machine, so if its job fails the release goes out without it.
   release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [linux, macos]
+    if: >
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.linux.result == 'success' && needs.macos.result == 'success'
+    needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -95,8 +133,12 @@ jobs:
             --notes "Automatic build of $short_sha on main.
 
           - **macOS** (\`agent_tray_demo-macos.zip\`): unsigned universal app (Apple silicon and Intel). After unzipping, run \`xattr -dr com.apple.quarantine agent_tray_demo.app\` once, or right-click the app and choose Open.
-          - **Linux** (\`agent_tray_demo-linux-x64.tar.gz\`): the release bundle; extract it and run \`bundle/agent_tray_demo\`. Needs GTK 3 and X11 (XWayland).
+          - **Linux** (\`agent_tray_demo-linux-x64.tar.gz\`): the release bundle; extract it and run \`bundle/agent_tray_demo\`. Needs GTK 3 and X11 (XWayland); built on Ubuntu 22.04.
+
+          - **Windows** (\`agent_tray_demo-windows-x64.zip\`, when its build passed): unsigned; unzip and run \`agent_tray_demo\\agent_tray_demo.exe\`. SmartScreen may ask first: More info, then Run anyway.
+
+          Run any of them in one step with the scripts in \`scripts/\`.
 
           Commit: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA
           CI run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            dist/agent_tray_demo-macos.zip dist/agent_tray_demo-linux-x64.tar.gz
+            dist/*
