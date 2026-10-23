@@ -21,6 +21,12 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    // FlutterViewController only launches its engine in viewWillAppear, i.e. the
+    // first time its window is shown. This window is hidden at launch (the app
+    // lives in the menu bar), so without this the main engine never runs: Dart
+    // never creates the tray icon or the popover engine, and nothing appears.
+    _ = flutterViewController.engine.run(withEntrypoint: nil)
+
     super.awakeFromNib()
   }
 }
