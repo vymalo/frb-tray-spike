@@ -2,18 +2,32 @@
 #
 #   irm https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-windows.ps1 | iex
 #   powershell -ExecutionPolicy Bypass -File scripts\run-windows.ps1 [-Build N] [-Dir DIR] [-Logs]
+#   powershell -ExecutionPolicy Bypass -File scripts\run-windows.ps1 -Uninstall [-Dir DIR]
 #
-#   -Build N   build N from the releases page (default: the latest build)
-#   -Dir DIR   where to put the app (default: %LOCALAPPDATA%\frb-tray-spike)
-#   -Logs      run in this console and show the app's output; Ctrl-C quits
+#   -Build N     build N from the releases page (default: the latest build)
+#   -Dir DIR     where to put the app (default: %LOCALAPPDATA%\frb-tray-spike)
+#   -Logs        run in this console and show the app's output; Ctrl-C quits
+#   -Uninstall   quit the app and remove it
 param(
   [int]$Build = 0,
   [string]$Dir = (Join-Path $env:LOCALAPPDATA 'frb-tray-spike'),
-  [switch]$Logs
+  [switch]$Logs,
+  [switch]$Uninstall
 )
 $ErrorActionPreference = 'Stop'
 # Invoke-WebRequest downloads far faster without its progress bar.
 $ProgressPreference = 'SilentlyContinue'
+
+$app = Join-Path $Dir 'agent_tray_demo'
+if ($Uninstall) {
+  Get-Process agent_tray_demo -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Milliseconds 500
+  if (Test-Path $app) { Remove-Item -Recurse -Force $app }
+  # Only removes the folder if nothing else was put in it.
+  if ((Test-Path $Dir) -and -not (Get-ChildItem $Dir)) { Remove-Item $Dir }
+  Write-Host "Removed $app"
+  return
+}
 
 $repo = 'vymalo/frb-tray-spike'
 $asset = 'agent_tray_demo-windows-x64.zip'
@@ -35,7 +49,6 @@ try {
   Get-Process agent_tray_demo -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-Sleep -Milliseconds 500
 
-  $app = Join-Path $Dir 'agent_tray_demo'
   New-Item -ItemType Directory -Force -Path $Dir | Out-Null
   if (Test-Path $app) { Remove-Item -Recurse -Force $app }
   Expand-Archive -Path $zip -DestinationPath $Dir -Force

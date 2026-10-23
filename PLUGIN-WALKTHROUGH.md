@@ -561,5 +561,6 @@ The Rust library reports memory on Windows too: the process's working set,
 from `K32GetProcessMemoryInfo`.
 
 There's no Windows machine or SDK on the Linux box this was written on, so the
-first compile was CI's `windows` job. The things to check on a real machine
+first compile was CI's `windows` job, which passed: build, Rust, widget and
+plugin tests (`build-11`). The things to check on a real machine
 are listed in the README's "What to check on Windows".

@@ -3,10 +3,12 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-linux.sh | bash
 #   scripts/run-linux.sh [--build N] [--dir DIR] [--logs]
+#   scripts/run-linux.sh --uninstall [--dir DIR]
 #
-#   --build N   build N from the releases page (default: the latest build)
-#   --dir DIR   where to put the bundle (default: ~/.local/opt/frb-tray-spike)
-#   --logs      run in this terminal and show the app's output; Ctrl-C quits
+#   --build N     build N from the releases page (default: the latest build)
+#   --dir DIR     where to put the bundle (default: ~/.local/opt/frb-tray-spike)
+#   --logs        run in this terminal and show the app's output; Ctrl-C quits
+#   --uninstall   quit the app and remove the bundle and its log
 set -euo pipefail
 
 repo=vymalo/frb-tray-spike
@@ -14,16 +16,26 @@ asset=agent_tray_demo-linux-x64.tar.gz
 build=""
 dir="$HOME/.local/opt/frb-tray-spike"
 logs=0
+uninstall=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) build="$2"; shift 2 ;;
     --dir) dir="$2"; shift 2 ;;
     --logs) logs=1; shift ;;
-    -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 0 ;;
+    --uninstall) uninstall=1; shift ;;
+    -h|--help) sed -n '2,12s/^# \{0,1\}//p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
+
+if [ "$uninstall" = 1 ]; then
+  pkill -x agent_tray_demo 2>/dev/null && sleep 1 || true
+  rm -rf "$dir/bundle" "$dir/agent_tray_demo.log"
+  rmdir "$dir" 2>/dev/null || true
+  echo "Removed $dir/bundle"
+  exit 0
+fi
 
 if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
   echo "This build is for x64 Linux. On macOS use run-macos.sh." >&2

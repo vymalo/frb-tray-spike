@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520" role="img" aria-labelledby="title desc">
+  <title id="title">The tray spike's big picture</title>
+  <desc id="desc">One OS process with three parts stacked. At the top, the flutter_tray_popover plugin's native code: the tray icon, which you click, toggles the popover window. In the middle, one Dart VM running two Flutter engines: engine A runs appMain and the chat window, and calls setUp on the plugin (step 1); the plugin creates engine B hidden inside the popover window and shows it (step 2). At the bottom, the Rust library, loaded once, with the shared state and the mock agent thread. Engine B sends prompts to Rust with submitPrompt over FFI (step 3), and Rust pushes every change to both engines through their watchState streams (step 4).</desc>
+  <style>
+    .proc { fill: none; stroke: #888780; }
+    .proc-title { fill: #444441; }
+    .layer { fill: #EEEDFE; stroke: #534AB7; }
+    .layer-title { fill: #3C3489; }
+    .box { fill: #FFFFFF; stroke: #B4B2A9; }
+    .you { fill: #F1EFE8; stroke: #888780; }
+    .title { fill: #2C2C2A; }
+    .sub { fill: #5F5E5A; }
+    .label { fill: #444441; }
+    .rust { fill: #FAEEDA; stroke: #854F0B; }
+    .rust-title { fill: #633806; }
+    .rust-sub { fill: #854F0B; }
+    .arrow { stroke: #5F5E5A; fill: none; }
+    .head { fill: none; stroke: #5F5E5A; }
+    .push { stroke: #854F0B; fill: none; }
+    .push-head { fill: none; stroke: #854F0B; }
+    .push-label { fill: #854F0B; }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .t { font-size: 14px; font-weight: 600; }
+    .s { font-size: 12px; font-weight: 400; }
+    @media (prefers-color-scheme: dark) {
+      .proc { stroke: #888780; }
+      .proc-title { fill: #D3D1C7; }
+      .layer { fill: #26215C; stroke: #AFA9EC; }
+      .layer-title { fill: #CECBF6; }
+      .box { fill: #1F1F1E; stroke: #5F5E5A; }
+      .you { fill: #2C2C2A; stroke: #888780; }
+      .title { fill: #F1EFE8; }
+      .sub { fill: #B4B2A9; }
+      .label { fill: #D3D1C7; }
+      .rust { fill: #412402; stroke: #EF9F27; }
+      .rust-title { fill: #FAEEDA; }
+      .rust-sub { fill: #FAC775; }
+      .arrow { stroke: #B4B2A9; }
+      .head { stroke: #B4B2A9; }
+      .push { stroke: #EF9F27; }
+      .push-head { stroke: #EF9F27; }
+      .push-label { fill: #FAC775; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path class="head" d="M2 1L8 5L2 9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="push" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path class="push-head" d="M2 1L8 5L2 9" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- You -->
+  <rect class="you" x="100" y="10" width="90" height="30" rx="15" stroke-width="0.75"/>
+  <text class="t title" x="145" y="25" text-anchor="middle" dominant-baseline="central">You</text>
+
+  <!-- The process -->
+  <rect class="proc" x="20" y="56" width="680" height="452" rx="14" stroke-width="1" stroke-dasharray="5 4"/>
+  <text class="t proc-title" x="680" y="76" text-anchor="end" dominant-baseline="central">One OS process · agent_tray_demo</text>
+
+  <!-- Plugin -->
+  <rect class="layer" x="40" y="92" width="640" height="104" rx="12" stroke-width="0.75"/>
+  <text class="t layer-title" x="660" y="112" text-anchor="end" dominant-baseline="central">flutter_tray_popover plugin · native code</text>
+  <rect class="box" x="60" y="128" width="170" height="52" rx="8" stroke-width="0.75"/>
+  <text class="t title" x="145" y="147" text-anchor="middle" dominant-baseline="central">Tray icon</text>
+  <text class="s sub" x="145" y="166" text-anchor="middle" dominant-baseline="central">GTK · AppKit · Win32</text>
+  <rect class="box" x="410" y="128" width="250" height="52" rx="8" stroke-width="0.75"/>
+  <text class="t title" x="535" y="147" text-anchor="middle" dominant-baseline="central">Popover window</text>
+  <text class="s sub" x="535" y="166" text-anchor="middle" dominant-baseline="central">placement, focus, closes on click-outside</text>
+  <line class="arrow" x1="230" y1="154" x2="406" y2="154" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text class="s label" x="318" y="144" text-anchor="middle" dominant-baseline="central">toggle</text>
+
+  <!-- Engines -->
+  <rect class="layer" x="40" y="246" width="640" height="104" rx="12" stroke-width="0.75"/>
+  <text class="t layer-title" x="360" y="264" text-anchor="middle" dominant-baseline="central">One Dart VM · two Flutter engines, two isolates</text>
+  <rect class="box" x="60" y="282" width="270" height="52" rx="8" stroke-width="0.75"/>
+  <text class="t title" x="195" y="301" text-anchor="middle" dominant-baseline="central">Engine A · appMain</text>
+  <text class="s sub" x="195" y="320" text-anchor="middle" dominant-baseline="central">chat window, hidden until opened</text>
+  <rect class="box" x="390" y="282" width="270" height="52" rx="8" stroke-width="0.75"/>
+  <text class="t title" x="525" y="301" text-anchor="middle" dominant-baseline="central">Engine B · trayMain</text>
+  <text class="s sub" x="525" y="320" text-anchor="middle" dominant-baseline="central">the popover's UI</text>
+
+  <!-- 1: setUp, 2: creates and shows -->
+  <line class="arrow" x1="195" y1="282" x2="195" y2="200" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text class="s label" x="205" y="221" dominant-baseline="central">1 · setUp (platform channel)</text>
+  <line class="arrow" x1="525" y1="180" x2="525" y2="278" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <text class="s label" x="535" y="221" dominant-baseline="central">2 · creates (hidden), shows</text>
+
+  <!-- Rust -->
+  <rect class="rust" x="40" y="400" width="640" height="92" rx="12" stroke-width="0.75"/>
+  <text class="t rust-title" x="360" y="424" text-anchor="middle" dominant-baseline="central">Rust library · loaded once · rust/src/api/agent.rs</text>
+  <text class="s rust-sub" x="360" y="446" text-anchor="middle" dominant-baseline="central">one shared AgentSnapshot: task, progress, chat, engines</text>
+  <text class="s rust-sub" x="360" y="466" text-anchor="middle" dominant-baseline="central">mock agent thread updates it</text>
+
+  <!-- 3: submitPrompt, 4: watchState -->
+  <line class="arrow" x1="470" y1="334" x2="470" y2="396" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text class="s label" x="460" y="367" text-anchor="end" dominant-baseline="central">3 · submitPrompt (FFI)</text>
+  <line class="push" x1="195" y1="400" x2="195" y2="340" stroke-width="2.6" marker-end="url(#push)"/>
+  <text class="s push-label" x="205" y="367" dominant-baseline="central">4 · watchState stream</text>
+  <line class="push" x1="590" y1="400" x2="590" y2="340" stroke-width="2.6" marker-end="url(#push)"/>
+  <text class="s push-label" x="600" y="367" dominant-baseline="central">4 · watchState</text>
+
+  <!-- You click the tray icon; drawn last so it sits on top -->
+  <line class="arrow" x1="145" y1="40" x2="145" y2="124" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text class="s label" x="153" y="64" dominant-baseline="central">click</text>
+</svg>

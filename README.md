@@ -18,47 +18,133 @@ in this repo, [`flutter_tray_popover`](packages/flutter_tray_popover).
 [PROOF-ONE-PROCESS.md](PROOF-ONE-PROCESS.md) shows, from the running app and the
 code, that it really is one process with two engines and one Rust state.
 
+| | Linux | macOS | Windows |
+|---|---|---|---|
+| Status | Tested end to end | First run on a Mac done; [checklist](#on-a-mac) still to confirm | Builds and passes its tests in CI (from `build-11`); not yet run on Windows ([checklist](#on-windows)) |
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Using the plugin](#using-the-plugin)
+- [Platform notes](#platform-notes)
+- [Development](#development)
+- [Manual checks](#manual-checks)
+- [Related: Flutter's own multi-window support](#related-flutters-own-multi-window-support)
+
+## Quick start
+
+Every successful build of `main` is published as a public
+[GitHub release](https://github.com/vymalo/frb-tray-spike/releases), named
+`build-<number>`. One command downloads the newest build, installs it for your
+user and starts it:
+
+**macOS** 12 or later, Apple silicon or Intel. Installs to
+`~/Applications/agent_tray_demo.app`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-macos.sh | bash
+```
+
+**Linux** x64, Ubuntu 22.04 or newer (GTK 3, X11 or XWayland). Installs to
+`~/.local/opt/frb-tray-spike/bundle`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-linux.sh | bash
+```
+
+**Windows** 10 or 11, x64, in PowerShell. Installs to
+`%LOCALAPPDATA%\frb-tray-spike\agent_tray_demo`:
+
+```powershell
+irm https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-windows.ps1 | iex
+```
+
+Each script downloads the release file, stops a copy that's already running,
+unpacks it over the previous install and starts it. On macOS it also clears
+the quarantine flag, because the app isn't signed.
+
+From a clone, the scripts take options: a specific build, another folder, or
+running in the terminal with the app's logs (Ctrl-C quits):
+
+```bash
+scripts/run-macos.sh --build 12 --dir ~/Desktop --logs
+```
+```bash
+scripts/run-linux.sh --build 12 --dir ~/apps --logs
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run-windows.ps1 -Build 12 -Dir C:\apps -Logs
+```
+
+**Uninstall** with the same script: it quits the app and removes what it
+installed (on macOS also the app's sandbox data in
+`~/Library/Containers/dev.demo.agentTrayDemo`). Pass the same `--dir` /
+`-Dir` if you installed somewhere else.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-macos.sh | bash -s -- --uninstall
+```
+```bash
+curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-linux.sh | bash -s -- --uninstall
+```
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-windows.ps1))) -Uninstall
+```
+
+Then, with the app running:
+
+- Click the tray icon to toggle the popover next to it. On macOS,
+  <kbd>⌥ Space</kbd> also toggles it from any app.
+- Type an instruction in "Ask anything" and send it. The popover shows the
+  progress, and the chat window gets the prompt and the agent's live reply.
+- Click outside or press <kbd>Esc</kbd> to close the popover.
+- The popover's open-in-window button shows the chat window. Closing the chat
+  window only hides it.
+- The popover's `⋯` menu has **Simulate iPhone session**, **Stop run** and
+  **Quit**. Simulate iPhone session runs `checkout` from 0 to 40, and both
+  windows show "Driven from iPhone" and the same step.
+
+<details>
+<summary>Downloading the files by hand</summary>
+
+The newest build is always at these links:
+
+- **macOS:** [agent_tray_demo-macos.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip).
+  Unzip it, then clear the quarantine flag (`xattr -dr com.apple.quarantine
+  agent_tray_demo.app`), or right-click the app and choose **Open**. Start it
+  from a terminal (`./agent_tray_demo.app/Contents/MacOS/agent_tray_demo`) to
+  see its logs, including the plugin's `NSLog` lines.
+- **Linux:** [agent_tray_demo-linux-x64.tar.gz](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz).
+  Extract it and run `bundle/agent_tray_demo`.
+- **Windows:** [agent_tray_demo-windows-x64.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-windows-x64.zip).
+  Unzip it and run `agent_tray_demo\agent_tray_demo.exe`. It isn't signed, so
+  SmartScreen may stop it: choose **More info**, then **Run anyway**. The zip
+  includes the Visual C++ runtime. The tray icon may first appear in the
+  overflow behind the taskbar's **^** arrow. A release whose Windows build
+  failed has no Windows file.
+
+</details>
+
 ## Architecture
 
 ### The big picture
 
-```mermaid
-flowchart TB
-    subgraph PROC["One OS process: agent_tray_demo"]
-        direction TB
-        subgraph PLUGIN["flutter_tray_popover plugin (native: GTK on Linux, AppKit on macOS, Win32 on Windows)"]
-            TRAY["Tray icon"]
-            WIN["Popover window<br/>placement, focus, click-outside"]
-            KEY["⌥ Space shortcut<br/>(macOS)"]
-        end
-        subgraph A["Flutter engine A · Dart isolate 1"]
-            A1["appMain: sets up the plugin<br/>lib/main.dart"]
-            A2["Chat window, hidden until opened<br/>lib/main_window.dart"]
-        end
-        subgraph B["Flutter engine B · Dart isolate 2"]
-            B1["trayMain: the popover UI<br/>lib/tray_panel.dart"]
-        end
-        subgraph RUST["Rust library, loaded once: rust/src/api/agent.rs"]
-            STATE[("Shared AgentSnapshot<br/>task, progress, chat, engines")]
-            AGENT["Mock agent thread"]
-        end
-    end
+![The big picture: you click the tray icon in the plugin's native code, which toggles the popover window. Engine A calls setUp on the plugin (1); the plugin creates engine B hidden in the popover window and shows it (2). Engine B sends prompts to the Rust library over FFI (3), and Rust pushes every change to both engines through watchState (4).](images/big-picture.svg)
 
-    A1 -- "TrayPopover.setUp (platform channel)" --> PLUGIN
-    PLUGIN -. "creates at launch, hidden" .-> B
-    TRAY -- "click: toggle" --> WIN
-    KEY -- "toggle" --> WIN
-    WIN -- "shows / hides" --> B
-    B1 -- "hide, showMainWindow, quit" --> PLUGIN
-    A -- "FFI calls via FRB" --> STATE
-    B -- "FFI calls via FRB" --> STATE
-    AGENT -- "updates" --> STATE
-    STATE == "pushes every change<br/>(watchState stream)" ==> A
-    STATE == "pushes every change<br/>(watchState stream)" ==> B
-```
+1. **Launch:** engine A runs `appMain`, which calls `TrayPopover.setUp`
+   over a platform channel.
+2. **Setup:** the plugin's native code creates the tray icon, the hidden
+   popover window and engine B inside it, which runs `trayMain`.
+3. **Use:** a click on the tray icon shows the popover natively. A prompt
+   sent from it is an FFI call into Rust; engine A's chat window can send one
+   the same way.
+4. **Sync:** Rust pushes every change to both engines through their
+   `watchState` streams, so the two windows always show the same state. The
+   engines never talk to each other directly.
 
-Solid arrows are calls, dotted is creation, and thick arrows are state pushed
-from Rust to the engines.
+Thin arrows are calls, the dashed one is creation, and the thick arrows are
+state pushed from Rust to the engines.
 
 ### Where it sits in Flutter's layers
 
@@ -89,9 +175,7 @@ beside them:
 
 - **One app, two engines.** There's one Flutter project, one Dart codebase
   (`lib/`), one build and one executable. A Flutter **engine** is the runtime
-  that runs Dart code and draws a window. At launch, engine A runs `appMain`,
-  which calls `TrayPopover.setUp(...)`. The plugin then creates the tray icon
-  and engine B, a second engine inside the same process, which runs `trayMain`
+  that runs Dart code and draws a window. Engine B runs its own entry point
   (`lib/main.dart`):
 
   ```dart
@@ -102,9 +186,9 @@ beside them:
   Future<void> trayMain() async { ... runApp(await bootTrayPanel()); }
   ```
 
-  macOS and Windows start engine B at `trayMain` by name. The Linux embedder can only start
-  an engine at `main`, so there engine B runs `main` with a `tray_popover`
-  argument, and `TrayPopover.run` routes it to `trayMain`.
+  macOS and Windows start engine B at `trayMain` by name. The Linux embedder
+  can only start an engine at `main`, so there engine B runs `main` with a
+  `tray_popover` argument, and `TrayPopover.run` routes it to `trayMain`.
 
 - **The engines can't share Dart objects.** Each engine runs its own Dart
   **isolate**, with separate memory. So the shared state doesn't live in Dart.
@@ -112,9 +196,7 @@ beside them:
 - **The shared state lives in Rust.** The Rust library is loaded **once** per
   process, so both engines call into the same copy, and its `static` state is
   shared (`rust/src/api/agent.rs`). Engines **write** by calling Rust functions
-  such as `submitPrompt`, and **read** only from a stream: each engine calls
-  `watchState()`, and every change is pushed to both engines. The engines never
-  talk to each other directly.
+  such as `submitPrompt`, and **read** only from the `watchState()` stream.
 
 - **The plugin owns everything native.** The tray icon, the popover window
   (placement, focus, transparency, click-outside) and the global shortcut are
@@ -143,7 +225,7 @@ Both windows show the same revision number, because they read the same state.
 ```mermaid
 flowchart TD
     C(["Click on the tray icon<br/>or ⌥ Space on macOS"]) --> N["Plugin (native)"]
-    N --> W["Place the popover under the icon,<br/>show it with keyboard focus"]
+    N --> W["Place the popover next to the icon,<br/>show it with keyboard focus"]
     W --> O(["Popover open<br/>engine B renders it"])
     O --> X{"Click outside, Esc,<br/>or the tray icon again"}
     X -- "focus lost or tray icon" --> H["Plugin hides it"]
@@ -153,8 +235,8 @@ flowchart TD
 ```
 
 Engine B is started **hidden at launch**, so the first click opens the popover
-instantly. That costs memory up front: about 110 MB in a debug build. The chat
-window shows the measured cost of the second engine.
+instantly. That costs memory up front: about 110 MB in a debug build on Linux.
+The chat window shows the measured cost of the second engine.
 
 ### Why it's built this way
 
@@ -200,7 +282,7 @@ FlutterTrayPopoverPluginSetEngineCreatedCallback(
 See [packages/flutter_tray_popover/README.md](packages/flutter_tray_popover/README.md)
 for the full API.
 
-## Platform differences
+## Platform notes
 
 | | Linux (GNOME, X11 through XWayland) | macOS | Windows |
 |---|---|---|---|
@@ -208,7 +290,7 @@ for the full API.
 | Popover window | Borderless GTK utility window, always on top, skips the taskbar; transparent around the card when a compositor is running | Non-activating `NSPanel` (like Spotlight): takes keyboard focus without bringing the app forward, transparent around the card | Borderless tool window, always on top, no taskbar button, rounded corners on Windows 11; opaque, so the card fills it edge to edge |
 | How engine B starts | `main` with the `tray_popover` argument (no named entry points on Linux) | `trayMain` by name | `trayMain` by name |
 | Global shortcut | None | <kbd>⌥ Space</kbd> | None (<kbd>Alt Space</kbd> is the system window menu) |
-| Main window at launch | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) | Hidden, no Dock icon (`LSUIElement`); closing it only hides it (`AppDelegate`) | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) |
+| Main window at launch | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) | Hidden, no Dock icon (`LSUIElement`); the runner starts its engine explicitly, because a hidden window never would; closing it only hides it (`AppDelegate`) | Hidden; closing it only hides it (the plugin's `keepAliveOnWindowClose`) |
 
 **Why the Linux tray isn't an AppIndicator:** GNOME's tray extension opens an
 AppIndicator's native menu on a single click without telling the app. The
@@ -220,79 +302,13 @@ them with a GDK event filter. Linux also forces X11 (XWayland, in
 `linux/runner/main.cc`), because Wayland doesn't let an app position its
 popover under the tray.
 
-**Status:** the Linux build is tested end to end. macOS has had its first run
-on a real Mac: at launch nothing appeared, because the main engine only starts
-when its window is shown and that window is hidden. The runner now starts it
-explicitly (commit `5ee5379`, release `build-10`). The rest of the Mac
-checklist below is still to be confirmed. The Windows code is new: CI builds
-it, but it hasn't been run on a Windows machine yet.
-
-## Run
-
-### Download and run a build (no tools needed)
-
-Every successful build of `main` is published as a public
-[GitHub release](https://github.com/vymalo/frb-tray-spike/releases), named
-`build-<number>`. One command downloads the newest build, unpacks it,
-installs it for your user and starts it:
-
-**macOS** (universal: Apple silicon and Intel, macOS 12 or later). Installs to
-`~/Applications/agent_tray_demo.app`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-macos.sh | bash
-```
-
-**Linux** (x64, GTK 3, X11 or XWayland; Ubuntu 22.04 or newer). Installs to
-`~/.local/opt/frb-tray-spike/bundle`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-linux.sh | bash
-```
-
-**Windows** (x64, Windows 10 or 11), in PowerShell. Installs to
-`%LOCALAPPDATA%\frb-tray-spike\agent_tray_demo`:
-
-```powershell
-irm https://raw.githubusercontent.com/vymalo/frb-tray-spike/main/scripts/run-windows.ps1 | iex
-```
-
-From a clone, the same scripts take options: a specific build, another
-folder, or running in the terminal with the app's logs (Ctrl-C quits):
-
-```bash
-scripts/run-macos.sh --build 12 --dir ~/Desktop --logs
-```
-```bash
-scripts/run-linux.sh --build 12 --dir ~/apps --logs
-```
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\run-windows.ps1 -Build 12 -Dir C:\apps -Logs
-```
-
-Each script stops a copy that's already running, replaces the previous
-install, and prints where the tray icon is. If the app exits straight away,
-the Linux script prints its output.
-
-**Or download the files yourself.** The newest build is always at these links:
-
-- **macOS:** [agent_tray_demo-macos.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip).
-  The app isn't signed or notarized, so macOS blocks it the first time. Unzip
-  it, then clear the quarantine flag (`xattr -dr com.apple.quarantine
-  agent_tray_demo.app`), or right-click the app and choose **Open**. Start it
-  from a terminal (`./agent_tray_demo.app/Contents/MacOS/agent_tray_demo`) to
-  see its logs, including the plugin's `NSLog` lines.
-- **Linux:** [agent_tray_demo-linux-x64.tar.gz](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz).
-  Extract it and run `bundle/agent_tray_demo`.
-- **Windows:** [agent_tray_demo-windows-x64.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-windows-x64.zip).
-  Unzip it and run `agent_tray_demo\agent_tray_demo.exe`. It isn't signed, so
-  SmartScreen may stop it: choose **More info**, then **Run anyway**. The zip
-  includes the Visual C++ runtime. The tray icon may first appear in the
-  overflow behind the taskbar's **^** arrow. A Windows build that fails in CI
-  doesn't block the release, so this file is missing from releases whose
-  Windows build failed.
+## Development
 
 ### Build from source
+
+The FRB bindings are already generated and committed, so you don't need
+`flutter_rust_bridge_codegen` unless you change `rust/src/api/`. Each platform
+builds only on its own OS.
 
 **Linux** (Ubuntu 22.04 or newer):
 
@@ -301,24 +317,7 @@ sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 flutter run -d linux
 ```
 
-**Windows** (Flutter can't build a Windows app on another OS, so this needs
-Windows):
-
-1. Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) (not
-   VS Code) with the **Desktop development with C++** workload.
-2. Install [Flutter](https://docs.flutter.dev/get-started/install/windows)
-   (stable channel) and [Rust](https://rustup.rs) (the default MSVC toolchain).
-3. Run it from the repository's root:
-   ```powershell
-   flutter run -d windows
-   ```
-   Or build the release app, as CI does:
-   ```powershell
-   flutter build windows --release
-   ```
-   The app is then in `build\windows\x64\runner\Release`.
-
-**macOS** (Flutter can't build a macOS app on Linux, so this needs a Mac):
+**macOS:**
 
 1. Install [Xcode](https://apps.apple.com/app/xcode/id497799835) and its
    command-line tools (`xcode-select --install`), plus
@@ -330,88 +329,27 @@ Windows):
    ```bash
    rustup target add aarch64-apple-darwin x86_64-apple-darwin
    ```
-3. Run it from the repository's root:
-   ```bash
-   flutter run -d macos
-   ```
-   Or build the release app, as CI does:
-   ```bash
-   flutter build macos --release
-   ```
-   The app is then at `build/macos/Build/Products/Release/agent_tray_demo.app`.
+3. Run it with `flutter run -d macos`, or build the release app as CI does
+   with `flutter build macos --release`. The app is then at
+   `build/macos/Build/Products/Release/agent_tray_demo.app`.
 
-The FRB bindings are already generated and committed, so you don't need
-`flutter_rust_bridge_codegen` unless you change `rust/src/api/`.
+**Windows:**
 
-### What to check on a Mac
+1. Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) (not
+   VS Code) with the **Desktop development with C++** workload.
+2. Install [Flutter](https://docs.flutter.dev/get-started/install/windows)
+   (stable channel) and [Rust](https://rustup.rs) (the default MSVC toolchain).
+3. Run it with `flutter run -d windows`, or build the release app as CI does
+   with `flutter build windows --release`. The app is then in
+   `build\windows\x64\runner\Release`.
 
-The first run on a Mac found that the tray icon never appeared (fixed in
-`build-10`). These are the things to confirm on that build or later:
+Environment switches, on every platform:
 
-1. After launch, there's **no Dock icon and no window**, only the icon in the
-   menu bar.
-2. **Clicking the menu-bar icon** opens the popover, centred just below the
-   icon, as a rounded card with a shadow (transparent around it).
-3. You can **type in "Ask anything" straight away**, and the app's main window
-   doesn't come forward.
-4. **Clicking anywhere else** closes the popover; clicking the icon again
-   toggles it.
-5. **<kbd>⌥ Space</kbd>** opens and closes it from any app. If another app
-   owns that shortcut, a log line says so.
-6. Sending a prompt shows its progress in the popover; the popover's
-   open-in-window button shows the chat window with the same conversation.
-7. **Quit** in the popover's `⋯` menu ends the app.
+- `AGENT_DEMO_OPEN_PANEL=1` opens the popover at launch.
+- `AGENT_DEMO_SKIP_PLUGINS=1` skips plugin registration on engine B. The
+  popover then shows the `MissingPluginException` it gets.
 
-### What to check on Windows
-
-The Windows code is built by CI but hasn't been run on Windows yet:
-
-1. After launch there's **no window**, only the tray icon (maybe behind the
-   taskbar's **^** arrow; drag it onto the taskbar to keep it visible).
-2. **Clicking the tray icon** (left or right) opens the popover just above it,
-   or beside it with the taskbar on another edge, and clicking it again
-   closes it.
-3. You can **type in "Ask anything" straight away**.
-4. **Clicking anywhere else** closes the popover.
-5. Sending a prompt shows its progress in the popover; the popover's
-   open-in-window button shows the chat window with the same conversation,
-   and closing that window only hides it.
-6. **Quit** in the popover's `⋯` menu ends the app and removes the tray icon.
-
-`.github/workflows/build.yml` builds and tests all three platforms on every
-push, uploads the bundles as workflow artifacts, and publishes the release
-above for every build of `main` where Linux and macOS pass.
-
-### Try it
-
-- Launch it: only the tray icon appears.
-- Click the tray icon to toggle the popover next to it. On macOS, <kbd>⌥ Space</kbd>
-  toggles it from any app.
-- Type an instruction in "Ask anything" and send it. The popover shows the
-  progress, and the chat window gets the prompt and the agent's live reply.
-- Click outside or press <kbd>Esc</kbd> to close the popover.
-- The popover's open-in-window button shows the chat window. Closing the chat
-  window only hides it.
-- The popover's `⋯` menu has **Simulate iPhone session**, **Stop run** and
-  **Quit**. Simulate iPhone session runs `checkout` from 0 to 40, and both
-  windows show "Driven from iPhone" and the same step.
-- Environment switches:
-  - `AGENT_DEMO_OPEN_PANEL=1` opens the popover at launch.
-  - `AGENT_DEMO_SKIP_PLUGINS=1` skips plugin registration on engine B. The
-    popover then shows the `MissingPluginException` it gets.
-
-### Install (Linux)
-
-```bash
-linux/packaging/install.sh              # build a release and install it for this user
-linux/packaging/install.sh --autostart  # same, and start it at login
-linux/packaging/install.sh --uninstall
-```
-
-It installs to `~/.local/share/agent_tray_demo`, adds `agent-tray-demo` to
-`~/.local/bin` and an "Another" entry to the app grid.
-
-## Tests
+### Tests
 
 ```bash
 cargo test --manifest-path rust/Cargo.toml   # Rust: run state machine, chat messages, memory reading
@@ -425,7 +363,29 @@ flutter drive -d linux --driver=test_driver/integration_test.dart \
   --target=integration_test/two_engines_drive.dart
 ```
 
-## Code layout
+### CI and releases
+
+`.github/workflows/build.yml` runs on every push:
+
+| Job | Runs on | Does |
+|---|---|---|
+| `linux` | Ubuntu 22.04, so the bundle also runs on 22.04 | All the tests above, then a release build → `agent_tray_demo-linux-x64.tar.gz` |
+| `macos` | macOS | Rust, widget and plugin tests, then a universal release build → `agent_tray_demo-macos.zip` |
+| `windows` | Windows | Rust, widget and plugin tests, then a release build with the Visual C++ runtime → `agent_tray_demo-windows-x64.zip` |
+| `release` | Ubuntu | On `main`, when Linux and macOS pass: publishes `build-<number>` with every file that was built, as the latest release |
+
+### Install on Linux from source
+
+```bash
+linux/packaging/install.sh              # build a release and install it for this user
+linux/packaging/install.sh --autostart  # same, and start it at login
+linux/packaging/install.sh --uninstall
+```
+
+It installs to `~/.local/share/agent_tray_demo`, adds `agent-tray-demo` to
+`~/.local/bin` and an "Another" entry to the app grid.
+
+### Code layout
 
 ```
 lib/                                Dart: one codebase for both engines
@@ -442,14 +402,54 @@ packages/flutter_tray_popover/      the plugin: tray icon, popover window, engin
   macos/Classes/FlutterTrayPopoverPlugin.swift  macOS implementation (NSStatusItem, NSPanel)
   windows/flutter_tray_popover_plugin.cpp   Windows implementation (Shell_NotifyIcon, Win32 window)
 linux/runner/                       Linux runner: forces X11, registers plugins on engine B
-macos/Runner/                       macOS runner: registers plugins on engine B, menu-bar app settings
+macos/Runner/                       macOS runner: starts the main engine, registers plugins on engine B
 windows/runner/                     Windows runner: registers plugins on engine B, starts hidden
 linux/packaging/                    Linux install script, desktop entry, icon
 scripts/                            download, install and run a CI build: run-macos.sh, run-linux.sh, run-windows.ps1
 test/                               widget tests
 integration_test/                   tests that run the real app with the real Rust library
 PROOF-ONE-PROCESS.md                evidence: one process, two engines, one Rust state
+PLUGIN-WALKTHROUGH.md               how the tray and popover moved into the plugin, and how it works
 ```
+
+## Manual checks
+
+Linux is tested end to end, by the tests above and by hand. macOS and Windows
+still need these checks on a real machine.
+
+### On a Mac
+
+The first run on a Mac found that nothing appeared at launch: a hidden
+window's Flutter engine never starts by itself, so the runner now starts it
+(commit `5ee5379`, release `build-10`). To confirm on that build or later:
+
+1. After launch, there's **no Dock icon and no window**, only the icon in the
+   menu bar.
+2. **Clicking the menu-bar icon** opens the popover, centred just below the
+   icon, as a rounded card with a shadow (transparent around it).
+3. You can **type in "Ask anything" straight away**, and the app's main window
+   doesn't come forward.
+4. **Clicking anywhere else** closes the popover; clicking the icon again
+   toggles it.
+5. **<kbd>⌥ Space</kbd>** opens and closes it from any app. If another app
+   owns that shortcut, a log line says so.
+6. Sending a prompt shows its progress in the popover; the popover's
+   open-in-window button shows the chat window with the same conversation.
+7. **Quit** in the popover's `⋯` menu ends the app.
+
+### On Windows
+
+1. After launch there's **no window**, only the tray icon (maybe behind the
+   taskbar's **^** arrow; drag it onto the taskbar to keep it visible).
+2. **Clicking the tray icon** (left or right) opens the popover just above it,
+   or beside it with the taskbar on another edge, and clicking it again
+   closes it.
+3. You can **type in "Ask anything" straight away**.
+4. **Clicking anywhere else** closes the popover.
+5. Sending a prompt shows its progress in the popover; the popover's
+   open-in-window button shows the chat window with the same conversation,
+   and closing that window only hides it.
+6. **Quit** in the popover's `⋯` menu ends the app and removes the tray icon.
 
 ## Related: Flutter's own multi-window support
 
@@ -457,9 +457,9 @@ This spike uses **two engines**, one per window, because Flutter on desktop has
 so far drawn one window per engine. Flutter is adding **multi-window support to
 a single engine**: several native windows in one widget tree, so they can share
 Dart state directly, without a native store like the Rust library here. If that
-becomes stable on Linux and macOS, the popover could be a second window of the
-same engine instead of a second engine. That would mean less memory, and no
-cross-engine state.
+becomes stable on the desktop platforms, the popover could be a second window
+of the same engine instead of a second engine. That would mean less memory, and
+no cross-engine state.
 
 Status when this was written (October 2026): **experimental**, on the `main`
 channel only, behind a feature flag. The stable Flutter used here (3.41) has no
