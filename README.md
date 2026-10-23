@@ -69,42 +69,18 @@ code) ([architectural overview](https://docs.flutter.dev/resources/architectural
 This app uses each layer twice, once per engine, and adds the Rust library
 beside them:
 
-```mermaid
-flowchart TB
-    subgraph FW["Framework layer · Dart"]
-        direction LR
-        FA["Engine A's app<br/>chat window, setUp"]
-        FB["Engine B's app<br/>popover, trayMain"]
-    end
-    subgraph EN["Engine layer · C++, one Dart VM, libflutter loaded once"]
-        direction LR
-        EA["Engine instance A<br/>isolate 1, own threads"]
-        EB["Engine instance B<br/>isolate 2, own threads"]
-    end
-    subgraph EM["Embedder layer · native"]
-        direction LR
-        RU["Runner<br/>hosts engine A's window"]
-        PN["Plugin native code<br/>tray, popover window, creates engine B"]
-    end
-    OS["OS: X11 · GNOME tray · AppKit"]
-    RS[("Rust library, loaded once<br/>shared state")]
+![The app in Flutter's layers: the framework layer (Dart) with engine A's chat window and engine B's popover; the engine layer with two engine instances in one Dart VM; the embedder layer with the runner and the plugin's native code; the OS below; the Rust library beside them, reached over FFI](images/flutter-layers.svg)
 
-    FW <-. "platform channels" .-> EN
-    EN <-. "platform channels" .-> EM
-    EM --> OS
-    FW -- "FFI calls" --> RS
-    RS -- "state pushed to<br/>each engine's port" --> FW
-```
-
-- **Platform channels** (dotted) are Flutter's standard path between Dart and
-  native code: `TrayPopover.setUp`, `show`, `visibilityChanged` and so on go
-  from the framework through the engine to the plugin's native code. Channels
-  belong to an engine, so plugins are registered on each engine.
-- **FFI** (solid) bypasses the engine and the embedder: `submitPrompt` and
-  `watchState` call the Rust library directly through `dart:ffi`, and Rust
-  posts changes back to each engine's Dart port (`Dart_PostCObject`). So the
-  shared state needs no per-engine registration, only `RustLib.init()` in each
-  isolate.
+- **Platform channels** (the dashed arrows between the layers) are Flutter's
+  standard path between Dart and native code: `TrayPopover.setUp`, `show`,
+  `visibilityChanged` and so on go from the framework through the engine to
+  the plugin's native code. Channels belong to an engine, so plugins are
+  registered on each engine.
+- **FFI** (the arrows to and from the Rust library) bypasses the engine and
+  the embedder: `submitPrompt` and `watchState` call the Rust library directly
+  through `dart:ffi`, and Rust posts changes back to each engine's Dart port
+  (`Dart_PostCObject`). So the shared state needs no per-engine registration,
+  only `RustLib.init()` in each isolate.
 - **What's shared and what isn't:** the Dart VM, `libflutter` and the Rust
   library exist once per process. The engine instances, their isolates,
   threads, windows and plugin channels exist twice.
