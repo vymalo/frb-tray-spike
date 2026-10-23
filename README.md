@@ -239,28 +239,102 @@ them with a GDK event filter. Linux also forces X11 (XWayland, in
 `linux/runner/main.cc`), because Wayland doesn't let an app position its
 popover under the tray.
 
-**Status:** the Linux build is tested end to end. The macOS code hasn't been
-compiled or run since moving into the plugin: CI compiles it on the next push,
-and it still needs a test on a Mac. Windows isn't implemented.
+**Status:** the Linux build is tested end to end. The macOS code compiles and
+passes CI ([run 39826822302](https://github.com/vymalo/frb-tray-spike/actions/runs/39826822302)),
+but hasn't been run on a Mac yet. Windows isn't implemented.
 
 ## Run
 
-Linux (Ubuntu 24.04):
+### Download a build (no tools needed)
+
+Every successful build of `main` is published as a public
+[GitHub release](https://github.com/vymalo/frb-tray-spike/releases), named
+`build-<number>`. The newest one is always at these links:
+
+- **macOS**, universal (Apple silicon and Intel), macOS 12 or later:
+  [agent_tray_demo-macos.zip](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip)
+- **Linux** x64: [agent_tray_demo-linux-x64.tar.gz](https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz)
+
+**On a Mac:** the app isn't signed or notarized, so macOS blocks it the first
+time. Unzip it, then clear the quarantine flag, or right-click the app and
+choose **Open**:
+
+```bash
+unzip agent_tray_demo-macos.zip
+```
+```bash
+xattr -dr com.apple.quarantine agent_tray_demo.app
+```
+```bash
+open agent_tray_demo.app
+```
+
+Logs (including the plugin's `NSLog` lines) appear if you start it from a
+terminal instead:
+
+```bash
+./agent_tray_demo.app/Contents/MacOS/agent_tray_demo
+```
+
+**On Linux:** extract it and run `bundle/agent_tray_demo`. It needs GTK 3 and
+X11 or XWayland.
+
+### Build from source
+
+**Linux** (Ubuntu 24.04):
 
 ```bash
 sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 flutter run -d linux
 ```
 
-macOS (needs Xcode and CocoaPods; Flutter can't build a macOS app from Linux):
+**macOS** (Flutter can't build a macOS app on Linux, so this needs a Mac):
 
-```bash
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-flutter run -d macos
-```
+1. Install [Xcode](https://apps.apple.com/app/xcode/id497799835) and its
+   command-line tools (`xcode-select --install`), plus
+   [CocoaPods](https://guides.cocoapods.org/using/getting-started.html)
+   (`brew install cocoapods`).
+2. Install [Flutter](https://docs.flutter.dev/get-started/install/macos) (stable
+   channel) and [Rust](https://rustup.rs), then add the Mac targets the Rust
+   library is built for:
+   ```bash
+   rustup target add aarch64-apple-darwin x86_64-apple-darwin
+   ```
+3. Run it from the repository's root:
+   ```bash
+   flutter run -d macos
+   ```
+   Or build the release app, as CI does:
+   ```bash
+   flutter build macos --release
+   ```
+   The app is then at `build/macos/Build/Products/Release/agent_tray_demo.app`.
 
-`.github/workflows/build.yml` builds and tests both platforms on every push and
-uploads the app bundles as artifacts.
+The FRB bindings are already generated and committed, so you don't need
+`flutter_rust_bridge_codegen` unless you change `rust/src/api/`.
+
+### What to check on a Mac
+
+The macOS code compiles in CI but hasn't been run on a Mac yet, so these are
+the first things to check:
+
+1. After launch, there's **no Dock icon and no window**, only the icon in the
+   menu bar.
+2. **Clicking the menu-bar icon** opens the popover, centred just below the
+   icon, as a rounded card with a shadow (transparent around it).
+3. You can **type in "Ask anything" straight away**, and the app's main window
+   doesn't come forward.
+4. **Clicking anywhere else** closes the popover; clicking the icon again
+   toggles it.
+5. **<kbd>⌥ Space</kbd>** opens and closes it from any app. If another app
+   owns that shortcut, a log line says so.
+6. Sending a prompt shows its progress in the popover; the popover's
+   open-in-window button shows the chat window with the same conversation.
+7. **Quit** in the popover's `⋯` menu ends the app.
+
+`.github/workflows/build.yml` builds and tests both platforms on every push,
+uploads the bundles as workflow artifacts, and publishes the release above
+for every successful build of `main`.
 
 ### Try it
 

@@ -11,7 +11,7 @@ instantly.
 | Popover window | Borderless utility window, always on top, transparent with a compositor | Non-activating `NSPanel`, transparent | — |
 | Popover engine starts at | `main(['tray_popover'])` | `trayMain` by name | — |
 | Global shortcut | — | <kbd>⌥ Space</kbd> | — |
-| Status | Tested | Written, not yet compiled or run | — |
+| Status | Tested | Compiles in CI, not yet run on a Mac | — |
 
 ## Usage
 

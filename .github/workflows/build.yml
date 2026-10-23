@@ -32,10 +32,13 @@ jobs:
           --driver=test_driver/integration_test.dart
           --target=integration_test/two_engines_drive.dart
       - run: flutter build linux --release
+      # A tarball keeps the bundle's executable bits, which a zip artifact loses.
+      - name: Package bundle
+        run: tar -czf agent_tray_demo-linux-x64.tar.gz -C build/linux/x64/release bundle
       - uses: actions/upload-artifact@v4
         with:
           name: agent_tray_demo-linux
-          path: build/linux/x64/release/bundle
+          path: agent_tray_demo-linux-x64.tar.gz
 
   macos:
     runs-on: macos-latest
@@ -60,3 +63,40 @@ jobs:
         with:
           name: agent_tray_demo-macos
           path: agent_tray_demo-macos.zip
+
+  # Every successful build of main becomes a public GitHub release, downloadable
+  # without a GitHub account: build-<run number>, with the macOS app and the
+  # Linux bundle attached. The newest is also the repository's "latest"
+  # release, so these links always point at the last good build:
+  #   https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-macos.zip
+  #   https://github.com/vymalo/frb-tray-spike/releases/latest/download/agent_tray_demo-linux-x64.tar.gz
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: build-${{ github.run_number }}
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Build ${{ github.run_number }} ($short_sha)" \
+            --latest \
+            --notes "Automatic build of $short_sha on main.
+
+          - **macOS** (\`agent_tray_demo-macos.zip\`): unsigned universal app (Apple silicon and Intel). After unzipping, run \`xattr -dr com.apple.quarantine agent_tray_demo.app\` once, or right-click the app and choose Open.
+          - **Linux** (\`agent_tray_demo-linux-x64.tar.gz\`): the release bundle; extract it and run \`bundle/agent_tray_demo\`. Needs GTK 3 and X11 (XWayland).
+
+          Commit: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA
+          CI run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            dist/agent_tray_demo-macos.zip dist/agent_tray_demo-linux-x64.tar.gz

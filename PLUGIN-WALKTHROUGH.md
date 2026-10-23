@@ -512,9 +512,11 @@ On the real app, with clicks sent the way GNOME forwards them:
 
 ## 8. Open points
 
-- **macOS hasn't been compiled.** The Swift was rewritten into the plugin.
-  CI would compile it on a push, and it still needs a run on a Mac: status
-  item, `run(withEntrypoint: "trayMain")`, the panel, ⌥ Space.
+- **macOS compiles but hasn't been run.** After the commit, CI built the
+  plugin's Swift and the macOS app successfully
+  ([run 39826822302](https://github.com/vymalo/frb-tray-spike/actions/runs/39826822302)).
+  It still needs a run on a Mac: status item, `run(withEntrypoint: "trayMain")`,
+  the panel, ⌥ Space.
 - **Not exercised:** `TrayPopover.quit()`.
 - **Windows** isn't implemented.
 - **The plugin's `LICENSE`** is still the template's "TODO: Add your license
