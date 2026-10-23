@@ -494,7 +494,7 @@ and docs.
 
 ## 7. Testing
 
-All on Linux (Ubuntu 24.04, GNOME, X11 through XWayland), on the staged code:
+All on Linux (Ubuntu 22.04, GNOME, X11 through XWayland), on the staged code:
 
 | Check | Result |
 |---|---|

@@ -26,7 +26,7 @@ one OS process (agent_tray_demo)
 ## 1. What the running system shows
 
 Sections 1.1 to 1.5 were captured on 2026-10-22 from the build that uses the
-[`flutter_tray_popover`](packages/flutter_tray_popover) plugin, on Ubuntu 24.04
+[`flutter_tray_popover`](packages/flutter_tray_popover) plugin, on Ubuntu 22.04
 (GNOME, X11 through XWayland). 1.1, 1.2, 1.3 and 1.5 come from the installed
 release build (`linux/packaging/install.sh`), started from the app grid with no
 window opened: the plugin creates engine B hidden at launch, so both engines
